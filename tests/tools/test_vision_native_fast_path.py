@@ -263,3 +263,36 @@ class TestHandleVisionAnalyzeFastPath:
         assert isinstance(result, str)
         assert json.loads(result) == {"sentinel": "aux-path"}
         mock_aux.assert_called_once()
+
+    def test_explicit_model_override_disables_fast_path(self, tmp_path):
+        """Per-call model override should force auxiliary routing."""
+        img = tmp_path / "x.png"
+        img.write_bytes(_TINY_PNG)
+
+        async def _aux_sentinel(*args, **kwargs):
+            return '{"sentinel": "aux-path"}'
+
+        from agent.auxiliary_client import set_runtime_main, clear_runtime_main
+        set_runtime_main("openrouter", "anthropic/claude-opus-4.6")
+        try:
+            with patch(
+                "agent.image_routing.decide_image_input_mode",
+                return_value="native",
+            ), patch(
+                "tools.vision_tools.vision_analyze_tool",
+                side_effect=_aux_sentinel,
+            ) as mock_aux:
+                coro = _handle_vision_analyze(
+                    {
+                        "image_url": str(img),
+                        "question": "?",
+                        "model": "google/gemini-2.5-flash",
+                    }
+                )
+                result = asyncio.get_event_loop().run_until_complete(coro)
+        finally:
+            clear_runtime_main()
+
+        assert isinstance(result, str)
+        assert json.loads(result) == {"sentinel": "aux-path"}
+        mock_aux.assert_called_once()

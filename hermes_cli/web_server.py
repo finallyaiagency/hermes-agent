@@ -3090,6 +3090,24 @@ async def get_skills():
     return skills
 
 
+@app.get("/api/skills/content")
+async def get_skill_content(name: str):
+    from tools.skills_tool import skill_view
+
+    raw = skill_view(name, preprocess=False)
+    try:
+        payload = json.loads(raw)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to parse skill content response: {exc}"
+        ) from exc
+
+    if not payload.get("success"):
+        raise HTTPException(status_code=404, detail=payload.get("error", "Skill not found"))
+
+    return payload
+
+
 @app.put("/api/skills/toggle")
 async def toggle_skill(body: SkillToggle):
     from hermes_cli.skills_config import get_disabled_skills, save_disabled_skills

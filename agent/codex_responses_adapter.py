@@ -948,7 +948,7 @@ def _preflight_codex_api_kwargs(
 
 def _extract_responses_message_text(item: Any) -> str:
     """Extract assistant text from a Responses message output item."""
-    content = getattr(item, "content", None)
+    content = getattr(item, "content", None) or []
     if not isinstance(content, list):
         return ""
 
@@ -965,7 +965,7 @@ def _extract_responses_message_text(item: Any) -> str:
 
 def _extract_responses_reasoning_text(item: Any) -> str:
     """Extract a compact reasoning text from a Responses reasoning item."""
-    summary = getattr(item, "summary", None)
+    summary = getattr(item, "summary", None) or []
     if isinstance(summary, list):
         chunks: List[str] = []
         for part in summary:
@@ -1078,7 +1078,7 @@ def _normalize_codex_response(
     saw_final_answer_phase = False
     saw_reasoning_item = False
 
-    for item in output:
+    for item in (output or []):
         item_type = getattr(item, "type", None)
         item_status = getattr(item, "status", None)
         if isinstance(item_status, str):
@@ -1140,7 +1140,7 @@ def _normalize_codex_response(
                 if isinstance(item_id, str) and item_id:
                     raw_item["id"] = item_id
                 # Capture summary — required by the API when replaying reasoning items
-                summary = getattr(item, "summary", None)
+                summary = getattr(item, "summary", None) or []
                 if isinstance(summary, list):
                     raw_summary = []
                     for part in summary:

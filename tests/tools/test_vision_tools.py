@@ -246,6 +246,30 @@ class TestHandleVisionAnalyze:
             # (the centralized call_llm router picks the default)
             assert model is None
 
+    def test_explicit_provider_and_model_override_env(self):
+        """Per-call provider/model should be forwarded and win over env defaults."""
+        with (
+            patch(
+                "tools.vision_tools.vision_analyze_tool", new_callable=AsyncMock
+            ) as mock_tool,
+            patch.dict(os.environ, {"AUXILIARY_VISION_MODEL": "env/default-model"}),
+        ):
+            mock_tool.return_value = json.dumps({"result": "ok"})
+            coro = _handle_vision_analyze(
+                {
+                    "image_url": "https://example.com/img.png",
+                    "question": "test",
+                    "provider": " openrouter ",
+                    "model": " google/gemini-2.5-flash ",
+                }
+            )
+            coro.close()
+            call_args = mock_tool.call_args
+            model = call_args[0][2]
+            provider = call_args.kwargs.get("provider")
+            assert model == "google/gemini-2.5-flash"
+            assert provider == "openrouter"
+
     def test_empty_args_graceful(self):
         """Missing keys should default to empty strings, not raise."""
         with patch(

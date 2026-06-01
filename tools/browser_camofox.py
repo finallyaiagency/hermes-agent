@@ -681,8 +681,13 @@ def camofox_get_images(task_id: Optional[str] = None) -> str:
         return tool_error(str(e), success=False)
 
 
-def camofox_vision(question: str, annotate: bool = False,
-                   task_id: Optional[str] = None) -> str:
+def camofox_vision(
+    question: str,
+    annotate: bool = False,
+    task_id: Optional[str] = None,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+) -> str:
     """Take a screenshot and analyze it with vision AI via Camofox."""
     try:
         session = _get_session(task_id)
@@ -756,6 +761,8 @@ def camofox_vision(question: str, annotate: bool = False,
                 ],
             }],
             task="vision",
+            provider=(str(provider).strip() or None) if provider is not None else None,
+            model=(str(model).strip() or None) if model is not None else None,
             temperature=_vision_temperature,
             timeout=_vision_timeout,
         )

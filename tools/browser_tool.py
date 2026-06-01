@@ -225,6 +225,14 @@ def _get_vision_model() -> Optional[str]:
     return os.getenv("AUXILIARY_VISION_MODEL", "").strip() or None
 
 
+def _normalize_optional_str(value: Any) -> Optional[str]:
+    """Normalize optional string-like tool args to trimmed str or None."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _get_extraction_model() -> Optional[str]:
     """Model for page snapshot text summarization — same as web_extract."""
     return os.getenv("AUXILIARY_WEB_EXTRACT_MODEL", "").strip() or None
@@ -1590,6 +1598,14 @@ BROWSER_TOOL_SCHEMAS = [
                     "type": "boolean",
                     "default": False,
                     "description": "If true, overlay numbered [N] labels on interactive elements. Each [N] maps to ref @eN for subsequent browser commands. Useful for QA and spatial reasoning about page layout."
+                },
+                "provider": {
+                    "type": "string",
+                    "description": "Optional per-call provider override for screenshot vision analysis (for example: openrouter, openai-codex, anthropic, nous)."
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Optional per-call model override for screenshot vision analysis. Example: google/gemini-2.5-flash or google/gemini-2.5-pro."
                 }
             },
             "required": ["question"]
@@ -3044,7 +3060,13 @@ def browser_get_images(task_id: Optional[str] = None) -> str:
         return json.dumps(_copy_fallback_warning(response, result), ensure_ascii=False)
 
 
-def browser_vision(question: str, annotate: bool = False, task_id: Optional[str] = None) -> Union[str, Dict[str, Any]]:
+def browser_vision(
+    question: str,
+    annotate: bool = False,
+    task_id: Optional[str] = None,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+) -> Union[str, Dict[str, Any]]:
     """
     Take a screenshot of the current page for visual inspection.
 
@@ -3062,14 +3084,25 @@ def browser_vision(question: str, annotate: bool = False, task_id: Optional[str]
         question: What you want to know about the page visually
         annotate: If True, overlay numbered [N] labels on interactive elements
         task_id: Task identifier for session isolation
+        provider: Optional per-call provider override for auxiliary vision
+        model: Optional per-call model override for auxiliary vision
 
     Returns:
         A JSON string with vision analysis results and screenshot_path, or a
         multimodal tool-result envelope carrying the screenshot and metadata.
     """
+    provider = _normalize_optional_str(provider)
+    model = _normalize_optional_str(model)
+
     if _is_camofox_mode():
         from tools.browser_camofox import camofox_vision
-        return camofox_vision(question, annotate, task_id)
+        return camofox_vision(
+            question,
+            annotate=annotate,
+            task_id=task_id,
+            provider=provider,
+            model=model,
+        )
 
     import base64
     import uuid as uuid_mod
@@ -3199,7 +3232,7 @@ def browser_vision(question: str, annotate: bool = False, task_id: Optional[str]
             _should_use_native_vision_fast_path,
         )
 
-        if _should_use_native_vision_fast_path():
+        if not (provider or model) and _should_use_native_vision_fast_path():
             native_result = _build_native_vision_tool_result(
                 image_url=str(screenshot_path),
                 question=question,
@@ -3228,7 +3261,7 @@ def browser_vision(question: str, annotate: bool = False, task_id: Optional[str]
         )
 
         # Use the centralized LLM router
-        vision_model = _get_vision_model()
+        vision_model = model or _get_vision_model()
         logger.debug("browser_vision: analysing screenshot (%d bytes)",
                      len(_screenshot_bytes))
 
@@ -3267,6 +3300,8 @@ def browser_vision(question: str, annotate: bool = False, task_id: Optional[str]
         }
         if vision_model:
             call_kwargs["model"] = vision_model
+        if provider:
+            call_kwargs["provider"] = provider
         # Try full-size screenshot; on size-related rejection, downscale and retry.
         try:
             response = call_llm(**call_kwargs)
@@ -3833,7 +3868,13 @@ registry.register(
     name="browser_vision",
     toolset="browser",
     schema=_BROWSER_SCHEMA_MAP["browser_vision"],
-    handler=lambda args, **kw: browser_vision(question=args.get("question", ""), annotate=args.get("annotate", False), task_id=kw.get("task_id")),
+    handler=lambda args, **kw: browser_vision(
+        question=args.get("question", ""),
+        annotate=args.get("annotate", False),
+        task_id=kw.get("task_id"),
+        provider=args.get("provider"),
+        model=args.get("model"),
+    ),
     check_fn=check_browser_vision_requirements,
     emoji="👁️",
 )

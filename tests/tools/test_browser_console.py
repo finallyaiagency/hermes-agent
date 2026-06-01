@@ -151,6 +151,10 @@ class TestBrowserVisionAnnotate:
         props = schema["parameters"]["properties"]
         assert "annotate" in props
         assert props["annotate"]["type"] == "boolean"
+        assert "provider" in props
+        assert props["provider"]["type"] == "string"
+        assert "model" in props
+        assert props["model"]["type"] == "string"
 
     def test_annotate_false_no_flag(self):
         """Without annotate, screenshot command has no --annotate flag."""
@@ -325,6 +329,79 @@ class TestBrowserVisionConfig:
 
         assert result["success"] is True
         assert result["analysis"] == "Text-mode screenshot analysis"
+        mock_llm.assert_called_once()
+
+    def test_browser_vision_forwards_explicit_provider_and_model(self, tmp_path):
+        from tools.browser_tool import browser_vision
+
+        shots_dir, screenshot = self._setup_screenshot(tmp_path)
+        mock_response = MagicMock()
+        mock_choice = MagicMock()
+        mock_choice.message.content = "Override screenshot analysis"
+        mock_response.choices = [mock_choice]
+
+        with (
+            patch("hermes_constants.get_hermes_dir", return_value=shots_dir),
+            patch("tools.browser_tool._cleanup_old_screenshots"),
+            patch(
+                "tools.browser_tool._run_browser_command",
+                return_value={"success": True, "data": {"path": str(screenshot)}},
+            ),
+            patch("hermes_cli.config.load_config", return_value={"auxiliary": {"vision": {}}}),
+            patch("tools.browser_tool.call_llm", return_value=mock_response) as mock_llm,
+        ):
+            result = json.loads(
+                browser_vision(
+                    "what is on the page?",
+                    task_id="test",
+                    provider=" openrouter ",
+                    model=" google/gemini-2.5-flash ",
+                )
+            )
+
+        assert result["success"] is True
+        assert result["analysis"] == "Override screenshot analysis"
+        assert mock_llm.call_args.kwargs["provider"] == "openrouter"
+        assert mock_llm.call_args.kwargs["model"] == "google/gemini-2.5-flash"
+
+    def test_browser_vision_explicit_model_bypasses_native_fast_path(self, tmp_path):
+        """Explicit model override should force aux analysis even in native mode."""
+        from agent.auxiliary_client import clear_runtime_main, set_runtime_main
+        from tools.browser_tool import browser_vision
+
+        shots_dir, screenshot = self._setup_screenshot(tmp_path)
+        mock_response = MagicMock()
+        mock_choice = MagicMock()
+        mock_choice.message.content = "Forced aux analysis"
+        mock_response.choices = [mock_choice]
+
+        set_runtime_main("openrouter", "anthropic/claude-opus-4.6")
+        try:
+            with (
+                patch("hermes_constants.get_hermes_dir", return_value=shots_dir),
+                patch("tools.browser_tool._cleanup_old_screenshots"),
+                patch(
+                    "tools.browser_tool._run_browser_command",
+                    return_value={"success": True, "data": {"path": str(screenshot)}},
+                ),
+                patch(
+                    "hermes_cli.config.load_config",
+                    return_value={"model": {"supports_vision": True}},
+                ),
+                patch("tools.browser_tool.call_llm", return_value=mock_response) as mock_llm,
+            ):
+                result = json.loads(
+                    browser_vision(
+                        "what is on the page?",
+                        task_id="test",
+                        model="google/gemini-2.5-flash",
+                    )
+                )
+        finally:
+            clear_runtime_main()
+
+        assert result["success"] is True
+        assert result["analysis"] == "Forced aux analysis"
         mock_llm.assert_called_once()
 
 

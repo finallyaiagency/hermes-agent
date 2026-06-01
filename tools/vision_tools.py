@@ -664,6 +664,7 @@ async def vision_analyze_tool(
     image_url: str,
     user_prompt: str,
     model: str = None,
+    provider: str = None,
 ) -> str:
     """
     Analyze an image from a URL or local file path using vision AI.
@@ -680,7 +681,8 @@ async def vision_analyze_tool(
         image_url (str): The URL or local file path of the image to analyze.
                          Accepts http://, https:// URLs or absolute/relative file paths.
         user_prompt (str): The pre-formatted prompt for the vision model
-        model (str): The vision model to use (default: google/gemini-3-flash-preview)
+        model (str): Optional vision model override for this call only
+        provider (str): Optional provider override for this call only
     
     Returns:
         str: JSON string containing the analysis results with the following structure:
@@ -703,7 +705,8 @@ async def vision_analyze_tool(
         "parameters": {
             "image_url": image_url,
             "user_prompt": user_prompt[:200] + "..." if len(user_prompt) > 200 else user_prompt,
-            "model": model
+            "model": model,
+            "provider": provider,
         },
         "error": None,
         "success": False,
@@ -833,6 +836,8 @@ async def vision_analyze_tool(
             "max_tokens": 2000,
             "timeout": vision_timeout,
         }
+        if provider:
+            call_kwargs["provider"] = provider
         if model:
             call_kwargs["model"] = model
         # Try full-size image first; on size-related rejection, downscale and retry.
@@ -1049,6 +1054,14 @@ VISION_ANALYZE_SCHEMA = {
             "question": {
                 "type": "string",
                 "description": "Your specific question or request about the image. Optional context the model uses on the next turn after seeing the image."
+            },
+            "provider": {
+                "type": "string",
+                "description": "Optional per-call provider override for auxiliary vision routing (for example: openrouter, openai-codex, anthropic, nous)."
+            },
+            "model": {
+                "type": "string",
+                "description": "Optional per-call model override for auxiliary vision routing. Example: google/gemini-2.5-flash, google/gemini-2.5-pro."
             }
         },
         "required": ["image_url", "question"]
@@ -1059,6 +1072,8 @@ VISION_ANALYZE_SCHEMA = {
 def _handle_vision_analyze(args: Dict[str, Any], **kw: Any) -> Awaitable[str]:
     image_url = args.get("image_url", "")
     question = args.get("question", "")
+    provider = (args.get("provider") or "").strip() or None
+    model = (args.get("model") or "").strip() or None
 
     # Fast path: when native image routing is in effect for the active main
     # model (provider accepts images in tool results, or the user set the
@@ -1066,7 +1081,9 @@ def _handle_vision_analyze(args: Dict[str, Any], **kw: Any) -> Awaitable[str]:
     # return the image bytes as a multimodal tool-result envelope. The main
     # model sees the pixels directly on its next turn — no aux call, no
     # information loss, no extra latency.
-    if _should_use_native_vision_fast_path():
+    # Explicit provider/model overrides force auxiliary routing so callers can
+    # do cheap-first / premium-fallback control on a per-call basis.
+    if not (provider or model) and _should_use_native_vision_fast_path():
         logger.info("vision_analyze: native fast path")
         return _vision_analyze_native(image_url, question)
 
@@ -1075,8 +1092,9 @@ def _handle_vision_analyze(args: Dict[str, Any], **kw: Any) -> Awaitable[str]:
         "Fully describe and explain everything about this image, then answer the "
         f"following question:\n\n{question}"
     )
-    model = os.getenv("AUXILIARY_VISION_MODEL", "").strip() or None
-    return vision_analyze_tool(image_url, full_prompt, model)
+    if model is None:
+        model = os.getenv("AUXILIARY_VISION_MODEL", "").strip() or None
+    return vision_analyze_tool(image_url, full_prompt, model, provider=provider)
 
 
 registry.register(

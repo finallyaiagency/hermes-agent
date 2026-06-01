@@ -30,6 +30,7 @@ import { Input } from "@nous-research/ui/ui/components/input";
 import { useI18n } from "@/i18n";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { PluginSlot } from "@/plugins";
+import { useModalBehavior } from "@/hooks/useModalBehavior";
 
 /* ------------------------------------------------------------------ */
 /*  Types & helpers                                                    */
@@ -101,9 +102,17 @@ export default function SkillsPage() {
   const [view, setView] = useState<"skills" | "toolsets">("skills");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [togglingSkills, setTogglingSkills] = useState<Set<string>>(new Set());
+  const [skillContentOpen, setSkillContentOpen] = useState(false);
+  const [skillContentLoading, setSkillContentLoading] = useState(false);
+  const [skillContentName, setSkillContentName] = useState("");
+  const [skillContentBody, setSkillContentBody] = useState("");
   const { toast, showToast } = useToast();
   const { t } = useI18n();
   const { setAfterTitle, setEnd } = usePageHeader();
+  const skillContentModalRef = useModalBehavior({
+    open: skillContentOpen,
+    onClose: () => setSkillContentOpen(false),
+  });
 
   useEffect(() => {
     Promise.all([api.getSkills(), api.getToolsets()])
@@ -137,6 +146,23 @@ export default function SkillsPage() {
         next.delete(skill.name);
         return next;
       });
+    }
+  };
+
+  const handleViewSkillContent = async (skill: SkillInfo) => {
+    setSkillContentOpen(true);
+    setSkillContentLoading(true);
+    setSkillContentName(skill.name);
+    setSkillContentBody("");
+    try {
+      const res = await api.getSkillContent(skill.name);
+      setSkillContentName(res.name || skill.name);
+      setSkillContentBody(res.content || "");
+    } catch {
+      showToast(`Failed to load skill content: ${skill.name}`, "error");
+      setSkillContentBody("");
+    } finally {
+      setSkillContentLoading(false);
     }
   };
 
@@ -358,6 +384,7 @@ export default function SkillsPage() {
                         skill={skill}
                         toggling={togglingSkills.has(skill.name)}
                         onToggle={() => handleToggleSkill(skill)}
+                        onViewContent={() => handleViewSkillContent(skill)}
                         noDescriptionLabel={t.skills.noDescription}
                       />
                     ))}
@@ -401,6 +428,7 @@ export default function SkillsPage() {
                         skill={skill}
                         toggling={togglingSkills.has(skill.name)}
                         onToggle={() => handleToggleSkill(skill)}
+                        onViewContent={() => handleViewSkillContent(skill)}
                         noDescriptionLabel={t.skills.noDescription}
                       />
                     ))}
@@ -488,6 +516,56 @@ export default function SkillsPage() {
         </div>
       </div>
       <PluginSlot name="skills:bottom" />
+
+      {skillContentOpen && (
+        <div
+          ref={skillContentModalRef}
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-background/85 backdrop-blur-sm p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSkillContentOpen(false);
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="skill-content-title"
+        >
+          <div className="relative w-full max-w-4xl border border-border bg-card shadow-2xl flex flex-col max-h-[85vh]">
+            <Button
+              ghost
+              size="icon"
+              onClick={() => setSkillContentOpen(false)}
+              className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
+              aria-label="Close"
+            >
+              <X />
+            </Button>
+
+            <header className="p-4 border-b border-border pr-12">
+              <h2
+                id="skill-content-title"
+                className="font-mondwest text-display text-sm tracking-[0.12em] text-text-secondary"
+              >
+                Skill Content
+              </h2>
+              <p className="text-xs text-muted-foreground mt-1 font-mono-ui">
+                {skillContentName}
+              </p>
+            </header>
+
+            <div className="p-4 overflow-auto">
+              {skillContentLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Spinner className="text-base" />
+                  Loading skill content...
+                </div>
+              ) : (
+                <pre className="text-xs leading-relaxed whitespace-pre-wrap font-courier">
+                  {skillContentBody || "No content returned."}
+                </pre>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -496,6 +574,7 @@ function SkillRow({
   skill,
   toggling,
   onToggle,
+  onViewContent,
   noDescriptionLabel,
 }: SkillRowProps) {
   return (
@@ -516,6 +595,14 @@ function SkillRow({
           >
             {skill.name}
           </span>
+          <Button
+            ghost
+            size="xs"
+            onClick={onViewContent}
+            className="h-6 rounded-none border border-border px-2 text-[11px]"
+          >
+            View Content
+          </Button>
         </div>
         <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
           {skill.description || noDescriptionLabel}
@@ -552,6 +639,7 @@ interface PanelItemProps {
 interface SkillRowProps {
   noDescriptionLabel: string;
   onToggle: () => void;
+  onViewContent: () => void;
   skill: SkillInfo;
   toggling: boolean;
 }
