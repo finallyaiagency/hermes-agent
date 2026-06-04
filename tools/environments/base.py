@@ -359,7 +359,7 @@ class BaseEnvironment(ABC):
         # Restore configured cwd after login shell profile scripts, which may
         # change the working directory (e.g. bashrc `cd ~`).  Without this,
         # pwd -P captures the profile's directory, not terminal.cwd.
-        _quoted_cwd = shlex.quote(self.cwd)
+        _quoted_cwd = self._quote_cwd_for_cd(self.cwd)
         # Quote the snapshot / cwd-file paths so Git Bash on Windows handles
         # ``C:/Users/...``-shaped paths without glob-splitting the colon or
         # tripping on drive letters.  On POSIX this is a no-op (no colons /
@@ -367,8 +367,8 @@ class BaseEnvironment(ABC):
         # caused ``C:/Users/.../hermes-snap-*.sh: No such file or directory``
         # errors on Windows, leaking via stderr (merged into stdout on Linux
         # backends) into every terminal-tool response.
-        _quoted_snap = shlex.quote(self._snapshot_path)
-        _quoted_cwd_file = shlex.quote(self._cwd_file)
+        _quoted_snap = self._quote_path_for_shell(self._snapshot_path)
+        _quoted_cwd_file = self._quote_path_for_shell(self._cwd_file)
         bootstrap = (
             f"export -p > {_quoted_snap}\n"
             f"declare -f | grep -vE '^_[^_]' >> {_quoted_snap}\n"
@@ -414,6 +414,10 @@ class BaseEnvironment(ABC):
             return f"$HOME/{shlex.quote(cwd[2:])}"
         return shlex.quote(cwd)
 
+    @staticmethod
+    def _quote_path_for_shell(path: str) -> str:
+        return shlex.quote(path)
+
     def _wrap_command(self, command: str, cwd: str) -> str:
         """Build the full bash script that sources snapshot, cd's, runs command,
         re-dumps env vars, and emits CWD markers."""
@@ -423,8 +427,8 @@ class BaseEnvironment(ABC):
         # ``C:/Users/...``-shaped paths without glob-splitting the colon or
         # tripping on drive letters.  POSIX paths are unaffected.  See
         # :meth:`init_session` for the same fix on the bootstrap block.
-        _quoted_snap = shlex.quote(self._snapshot_path)
-        _quoted_cwd_file = shlex.quote(self._cwd_file)
+        _quoted_snap = self._quote_path_for_shell(self._snapshot_path)
+        _quoted_cwd_file = self._quote_path_for_shell(self._cwd_file)
 
         parts = []
 

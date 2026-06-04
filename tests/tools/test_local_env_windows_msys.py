@@ -26,6 +26,7 @@ from tools.environments.local import (
     LocalEnvironment,
     _msys_to_windows_path,
     _resolve_safe_cwd,
+    _windows_to_msys_path,
 )
 
 
@@ -68,6 +69,36 @@ class TestMsysToWindowsPath:
     def test_empty_string(self, monkeypatch):
         monkeypatch.setattr(local_mod, "_IS_WINDOWS", True)
         assert _msys_to_windows_path("") == ""
+
+
+class TestWindowsToMsysPath:
+    def test_noop_on_non_windows(self, monkeypatch):
+        monkeypatch.setattr(local_mod, "_IS_WINDOWS", False)
+        assert _windows_to_msys_path(r"C:\Users\NVIDIA") == r"C:\Users\NVIDIA"
+
+    def test_translates_native_drive_path(self, monkeypatch):
+        monkeypatch.setattr(local_mod, "_IS_WINDOWS", True)
+        assert _windows_to_msys_path(r"C:\Users\NVIDIA") == "/c/Users/NVIDIA"
+        assert _windows_to_msys_path(r"D:\Projects\foo bar") == "/d/Projects/foo bar"
+
+    def test_translates_forward_slash_drive_path(self, monkeypatch):
+        monkeypatch.setattr(local_mod, "_IS_WINDOWS", True)
+        assert _windows_to_msys_path("C:/Users/NVIDIA") == "/c/Users/NVIDIA"
+
+    def test_translates_drive_root(self, monkeypatch):
+        monkeypatch.setattr(local_mod, "_IS_WINDOWS", True)
+        assert _windows_to_msys_path("C:\\") == "/c"
+        assert _windows_to_msys_path("C:") == "/c"
+
+    def test_shell_wrap_uses_msys_cd_target_on_windows(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(local_mod, "_IS_WINDOWS", True)
+        with patch.object(
+            LocalEnvironment, "init_session", autospec=True, return_value=None
+        ):
+            env = LocalEnvironment(cwd=str(tmp_path), timeout=10)
+        wrapped = env._wrap_command("pwd", r"C:\Users\17044\OneDrive\Documents\Hermes Agent")
+
+        assert "builtin cd -- '/c/Users/17044/OneDrive/Documents/Hermes Agent' || exit 126" in wrapped
 
 
 # ---------------------------------------------------------------------------

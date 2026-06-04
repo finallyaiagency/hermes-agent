@@ -86,6 +86,16 @@ def test_configurable_toolsets_include_context_engine():
     assert any(ts_key == "context_engine" for ts_key, _, _ in CONFIGURABLE_TOOLSETS)
 
 
+def test_configurable_toolsets_include_google_workspace():
+    assert any(ts_key == "google-workspace" for ts_key, _, _ in CONFIGURABLE_TOOLSETS)
+
+
+def test_get_platform_tools_default_cli_includes_google_workspace():
+    enabled = _get_platform_tools({}, "cli", include_default_mcp_servers=False)
+
+    assert "google-workspace" in enabled
+
+
 def test_get_platform_tools_active_context_engine_is_enabled_for_explicit_config():
     config = {
         "context": {"engine": "lcm"},

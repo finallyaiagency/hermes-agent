@@ -39,6 +39,23 @@ def _msys_to_windows_path(cwd: str) -> str:
     return f"{drive}:{tail or chr(92)}"  # chr(92) = backslash, avoid raw-string escape
 
 
+def _windows_to_msys_path(cwd: str) -> str:
+    """Translate native Windows drive paths to Git Bash / MSYS form.
+
+    Python's ``subprocess.Popen(..., cwd=...)`` needs native Windows paths, but
+    once Git Bash starts, ``cd C:\\Users\\...`` is not portable across MSYS
+    configurations. Use ``/c/Users/...`` for shell-side ``cd`` targets.
+    """
+    if not _IS_WINDOWS or not cwd:
+        return cwd
+    m = re.match(r"^([a-zA-Z]):[\\/]*(.*)$", cwd)
+    if not m:
+        return cwd
+    drive = m.group(1).lower()
+    tail = m.group(2).replace("\\", "/").strip("/")
+    return f"/{drive}/{tail}" if tail else f"/{drive}"
+
+
 def _resolve_safe_cwd(cwd: str) -> str:
     """Return ``cwd`` if it exists as a directory, else the nearest existing
     ancestor.  Falls back to ``tempfile.gettempdir()`` only if walking up the
@@ -250,6 +267,18 @@ def _find_bash() -> str:
     if custom and os.path.isfile(custom):
         return custom
 
+    def _is_wsl_launcher(path: str) -> bool:
+        normalized = os.path.normcase(os.path.abspath(path))
+        windir = os.path.normcase(os.environ.get("WINDIR", r"C:\Windows"))
+        local_appdata = os.path.normcase(os.environ.get("LOCALAPPDATA", ""))
+        return normalized in {
+            os.path.join(windir, "system32", "bash.exe"),
+            os.path.join(local_appdata, "Microsoft", "WindowsApps", "bash.exe"),
+        }
+
+    def _usable(candidate: str) -> bool:
+        return bool(candidate and os.path.isfile(candidate) and not _is_wsl_launcher(candidate))
+
     # Prefer our own portable Git install first — this way a broken or
     # partially-uninstalled system Git can't hijack the bash lookup.  The
     # install.ps1 installer always drops portable Git here when the user
@@ -266,20 +295,20 @@ def _find_bash() -> str:
             os.path.join(_hermes_portable_git, "bin", "bash.exe"),        # PortableGit (primary)
             os.path.join(_hermes_portable_git, "usr", "bin", "bash.exe"), # MinGit fallback
         ):
-            if os.path.isfile(candidate):
+            if _usable(candidate):
                 return candidate
-
-    found = shutil.which("bash")
-    if found:
-        return found
 
     for candidate in (
         os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Git", "bin", "bash.exe"),
         os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Git", "bin", "bash.exe"),
         os.path.join(_local_appdata, "Programs", "Git", "bin", "bash.exe"),
     ):
-        if candidate and os.path.isfile(candidate):
+        if _usable(candidate):
             return candidate
+
+    found = shutil.which("bash")
+    if _usable(found):
+        return found
 
     raise RuntimeError(
         "Git Bash not found. Hermes Agent requires Git for Windows on Windows.\n"
@@ -446,6 +475,18 @@ class LocalEnvironment(BaseEnvironment):
             cwd = os.path.expanduser(cwd)
         super().__init__(cwd=cwd or os.getcwd(), timeout=timeout, env=env)
         self.init_session()
+
+    @staticmethod
+    def _quote_cwd_for_cd(cwd: str) -> str:
+        if _IS_WINDOWS:
+            cwd = _windows_to_msys_path(cwd)
+        return BaseEnvironment._quote_cwd_for_cd(cwd)
+
+    @staticmethod
+    def _quote_path_for_shell(path: str) -> str:
+        if _IS_WINDOWS:
+            path = _windows_to_msys_path(path)
+        return BaseEnvironment._quote_path_for_shell(path)
 
     def get_temp_dir(self) -> str:
         """Return a shell-safe writable temp dir for local execution.

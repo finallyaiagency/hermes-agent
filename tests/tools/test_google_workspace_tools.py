@@ -73,6 +73,27 @@ class _DriveService:
         return self.files_obj
 
 
+class _Documents:
+    def __init__(self, doc=None):
+        self.doc = doc or {"body": {"content": [{"endIndex": 12}]}}
+        self.batch_updates = []
+
+    def get(self, **kwargs):
+        return _Request(self.doc)
+
+    def batchUpdate(self, **kwargs):
+        self.batch_updates.append(kwargs)
+        return _Request({})
+
+
+class _DocsService:
+    def __init__(self, doc=None):
+        self.documents_obj = _Documents(doc)
+
+    def documents(self):
+        return self.documents_obj
+
+
 def test_google_calendar_event_delete_by_event_id(monkeypatch):
     service = _Service()
     monkeypatch.setattr(gwt, "_calendar_service", lambda: service)
@@ -190,6 +211,49 @@ def test_google_drive_file_lists_folder_by_name(monkeypatch):
     assert result["success"] is True
     assert result["files"][0]["id"] == "doc-1"
     assert "'folder-1' in parents" in drive.files_obj.list_kwargs[-1]["q"]
+    assert drive.files_obj.list_kwargs[-1]["corpora"] == "allDrives"
+
+
+def test_google_drive_file_resolves_folder_name_case_insensitively(monkeypatch):
+    drive = _DriveService()
+
+    def list_side_effect(**kwargs):
+        drive.files_obj.list_kwargs.append(kwargs)
+        if "name='CEO Docs'" in kwargs["q"]:
+            return _Request({"files": []})
+        if "name contains 'CEO'" in kwargs["q"]:
+            return _Request(
+                {
+                    "files": [
+                        {
+                            "id": "folder-1",
+                            "name": "CEO docs",
+                            "mimeType": "application/vnd.google-apps.folder",
+                        }
+                    ]
+                }
+            )
+        return _Request(
+            {
+                "files": [
+                    {
+                        "id": "doc-1",
+                        "name": "Radar Bot Notes",
+                        "mimeType": "application/vnd.google-apps.document",
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(drive.files_obj, "list", list_side_effect)
+    monkeypatch.setattr(gwt, "_drive_service", lambda: drive)
+
+    result = json.loads(gwt.google_drive_file(action="list", folder_name="CEO Docs"))
+
+    assert result["success"] is True
+    assert result["files"][0]["id"] == "doc-1"
+    assert "'folder-1' in parents" in drive.files_obj.list_kwargs[-1]["q"]
+    assert all(call["corpora"] == "allDrives" for call in drive.files_obj.list_kwargs)
 
 
 def test_google_drive_file_delete_requires_exact_confirmation(monkeypatch):
@@ -201,6 +265,73 @@ def test_google_drive_file_delete_requires_exact_confirmation(monkeypatch):
     assert result["success"] is False
     assert result["required_confirmation"] == "DELETE doc-1"
     assert drive.files_obj.updated == []
+
+
+def test_google_drive_file_replace_text_uses_docs_api(monkeypatch):
+    drive = _DriveService()
+    docs = _DocsService()
+    monkeypatch.setattr(gwt, "_drive_service", lambda: drive)
+    monkeypatch.setattr(gwt, "_docs_service", lambda: docs)
+
+    result = json.loads(
+        gwt.google_drive_file(
+            action="replace_text",
+            file_id="doc-1",
+            match_text="Old note",
+            content="New note",
+        )
+    )
+
+    assert result["success"] is True
+    assert result["status"] == "replaced"
+    assert docs.documents_obj.batch_updates == [
+        {
+            "documentId": "doc-1",
+            "body": {
+                "requests": [
+                    {
+                        "replaceAllText": {
+                            "containsText": {"text": "Old note", "matchCase": False},
+                            "replaceText": "New note",
+                        }
+                    }
+                ]
+            },
+        }
+    ]
+
+
+def test_google_drive_file_rewrite_replaces_doc_body(monkeypatch):
+    drive = _DriveService()
+    docs = _DocsService({"body": {"content": [{"endIndex": 15}]}})
+    monkeypatch.setattr(gwt, "_drive_service", lambda: drive)
+    monkeypatch.setattr(gwt, "_docs_service", lambda: docs)
+
+    result = json.loads(
+        gwt.google_drive_file(
+            action="rewrite",
+            file_id="doc-1",
+            content="Replacement body",
+        )
+    )
+
+    assert result["success"] is True
+    assert result["status"] == "rewritten"
+    assert docs.documents_obj.batch_updates == [
+        {
+            "documentId": "doc-1",
+            "body": {
+                "requests": [
+                    {
+                        "deleteContentRange": {
+                            "range": {"startIndex": 1, "endIndex": 14}
+                        }
+                    },
+                    {"insertText": {"location": {"index": 1}, "text": "Replacement body"}},
+                ]
+            },
+        }
+    ]
 
 
 def test_google_drive_file_create_honors_spreadsheet_mime_type(monkeypatch):

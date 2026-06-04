@@ -226,7 +226,7 @@ _EXTRA_ENV_KEYS = frozenset({
 import yaml
 
 from hermes_cli.colors import Colors, color
-from hermes_cli.default_soul import DEFAULT_SOUL_MD
+from hermes_cli.default_soul import build_default_soul_md, default_agent_name_for_home
 
 
 # =============================================================================
@@ -678,7 +678,10 @@ def _ensure_default_soul_md(home: Path) -> None:
     soul_path = home / "SOUL.md"
     if soul_path.exists():
         return
-    soul_path.write_text(DEFAULT_SOUL_MD, encoding="utf-8")
+    soul_path.write_text(
+        build_default_soul_md(default_agent_name_for_home(home)),
+        encoding="utf-8",
+    )
     _secure_file(soul_path)
 
 

@@ -587,9 +587,9 @@ function SkillRow({
         />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-0.5">
+        <div className="mb-0.5 flex items-start gap-2">
           <span
-            className={`font-mono-ui text-sm ${
+            className={`min-w-0 flex-1 truncate font-mono-ui text-sm ${
               skill.enabled ? "text-foreground" : "text-muted-foreground"
             }`}
           >
@@ -599,7 +599,7 @@ function SkillRow({
             ghost
             size="xs"
             onClick={onViewContent}
-            className="h-6 rounded-none border border-border px-2 text-[11px]"
+            className="ml-auto inline-flex h-6 min-w-[84px] shrink-0 items-center justify-center whitespace-nowrap rounded-none border border-border px-2 text-[11px] leading-none"
           >
             View Content
           </Button>

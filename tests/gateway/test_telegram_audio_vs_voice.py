@@ -136,6 +136,33 @@ async def test_audio_attachment_context_note_format():
     assert "voice message" not in result.lower()
 
 
+@pytest.mark.asyncio
+async def test_cached_ogg_voice_memo_transcribes_even_if_misclassified_as_audio():
+    """Telegram voice memos cached as OGG should still reach STT."""
+    runner = _make_runner(stt_enabled=True)
+    source = SessionSource(platform=Platform.TELEGRAM, chat_id="1", chat_type="dm")
+    event = MessageEvent(
+        text="",
+        message_type=MessageType.AUDIO,
+        source=source,
+        media_urls=["/tmp/audio_cache/audio_abc.ogg"],
+        media_types=["audio/ogg"],
+    )
+
+    with patch(
+        "tools.transcription_tools.transcribe_audio",
+        return_value={"success": True, "transcript": "check in today", "provider": "whisper"},
+    ) as mock_transcribe:
+        result = await runner._prepare_inbound_message_text(
+            event=event,
+            source=source,
+            history=[],
+        )
+
+    mock_transcribe.assert_called_once_with("/tmp/audio_cache/audio_abc.ogg")
+    assert "check in today" in result
+
+
 # ---------------------------------------------------------------------------
 # 3. STT disabled still results in no transcription for audio file attachments
 # ---------------------------------------------------------------------------

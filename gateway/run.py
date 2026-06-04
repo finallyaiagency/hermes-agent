@@ -7732,8 +7732,8 @@ class GatewayRunner:
                     f"mid-turn. Wait for the current response or `/stop` first."
                 )
 
-            if event.message_type == MessageType.PHOTO:
-                logger.debug("PRIORITY photo follow-up for session %s — queueing without interrupt", _quick_key)
+            if event.media_urls:
+                logger.debug("PRIORITY media follow-up for session %s — queueing without interrupt", _quick_key)
                 adapter = self.adapters.get(source.platform)
                 if adapter:
                     merge_pending_message_event(adapter._pending_messages, _quick_key, event)
@@ -8400,15 +8400,26 @@ class GatewayRunner:
             audio_paths = []
             for i, path in enumerate(event.media_urls):
                 mtype = event.media_types[i] if i < len(event.media_types) else ""
+                _voice_like_ogg = (
+                    mtype in {"audio/ogg", "audio/opus"}
+                    and event.message_type != MessageType.DOCUMENT
+                    and str(path).lower().endswith((".ogg", ".opus"))
+                )
                 if mtype.startswith("image/") or event.message_type == MessageType.PHOTO:
                     image_paths.append(path)
-                # MessageType.AUDIO = audio file attachment (e.g. .mp3, .m4a) — never STT
-                # MessageType.VOICE = voice message (Opus/OGG) — always STT
-                if event.message_type == MessageType.AUDIO:
+                # MessageType.AUDIO = audio file attachment (e.g. .mp3, .m4a) — never STT.
+                # MessageType.VOICE = voice message (Opus/OGG) — always STT.
+                # Telegram voice memos may arrive with both audio-ish metadata and
+                # voice bytes; cached OGG/Opus payloads are treated as voice.
+                if event.message_type == MessageType.AUDIO and not _voice_like_ogg:
                     audio_file_paths.append(path)
-                elif event.message_type == MessageType.VOICE or (
-                    mtype.startswith("audio/")
-                    and event.message_type not in {MessageType.AUDIO, MessageType.DOCUMENT}
+                elif (
+                    event.message_type == MessageType.VOICE
+                    or (
+                        mtype.startswith("audio/")
+                        and event.message_type not in {MessageType.AUDIO, MessageType.DOCUMENT}
+                    )
+                    or _voice_like_ogg
                 ):
                     audio_paths.append(path)
 
@@ -15473,16 +15484,28 @@ class GatewayRunner:
         enriched_parts = []
         for path in audio_paths:
             try:
-                logger.debug("Transcribing user voice: %s", path)
+                logger.info("Transcribing user voice: %s", path)
+                _stt_started = time.time()
                 result = await asyncio.to_thread(transcribe_audio, path)
                 if result["success"]:
                     transcript = result["transcript"]
+                    logger.info(
+                        "Transcribed user voice: %s in %.1fs",
+                        path,
+                        time.time() - _stt_started,
+                    )
                     enriched_parts.append(
                         f'[The user sent a voice message~ '
                         f'Here\'s what they said: "{transcript}"]'
                     )
                 else:
                     error = result.get("error", "unknown error")
+                    logger.warning(
+                        "Voice transcription failed for %s in %.1fs: %s",
+                        path,
+                        time.time() - _stt_started,
+                        error,
+                    )
                     if (
                         "No STT provider" in error
                         or error.startswith("Neither VOICE_TOOLS_OPENAI_KEY nor OPENAI_API_KEY is set")

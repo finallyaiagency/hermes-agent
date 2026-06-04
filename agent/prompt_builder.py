@@ -12,6 +12,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 from hermes_constants import get_hermes_home, get_skills_dir, is_wsl
+from hermes_cli.default_soul import DEFAULT_SOUL_MD, build_default_soul_md, default_agent_name_for_home
 from typing import Optional
 
 from agent.skill_utils import (
@@ -117,15 +118,7 @@ def _strip_yaml_frontmatter(content: str) -> str:
 # Constants
 # =========================================================================
 
-DEFAULT_AGENT_IDENTITY = (
-    "You are Hermes Agent, an intelligent AI assistant created by Nous Research. "
-    "You are helpful, knowledgeable, and direct. You assist users with a wide "
-    "range of tasks including answering questions, writing and editing code, "
-    "analyzing information, creative work, and executing actions via your tools. "
-    "You communicate clearly, admit uncertainty when appropriate, and prioritize "
-    "being genuinely useful over being verbose unless otherwise directed below. "
-    "Be targeted and efficient in your exploration and investigations."
-)
+DEFAULT_AGENT_IDENTITY = DEFAULT_SOUL_MD
 
 HERMES_AGENT_HELP_GUIDANCE = (
     "If the user asks about configuring, setting up, or using Hermes Agent "
@@ -1369,9 +1362,11 @@ def load_soul_md() -> Optional[str]:
     if not soul_path.exists():
         return None
     try:
-        content = soul_path.read_text(encoding="utf-8").strip()
+        content = soul_path.read_text(encoding="utf-8").lstrip("\ufeff").strip()
         if not content:
             return None
+        if content == DEFAULT_SOUL_MD:
+            content = build_default_soul_md(default_agent_name_for_home(get_hermes_home()))
         content = _scan_context_content(content, "SOUL.md")
         content = _truncate_content(content, "SOUL.md")
         return content

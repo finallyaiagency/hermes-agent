@@ -26,6 +26,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -5258,15 +5259,16 @@ async def get_usage_analytics(days: int = 30):
     from hermes_state import SessionDB
     from agent.insights import InsightsEngine
 
+    days = max(1, min(int(days or 30), 365))
     db = SessionDB()
     try:
         cutoff = time.time() - (days * 86400)
         cur = db._conn.execute("""
-            SELECT date(started_at, 'unixepoch') as day,
-                   SUM(input_tokens) as input_tokens,
-                   SUM(output_tokens) as output_tokens,
-                   SUM(cache_read_tokens) as cache_read_tokens,
-                   SUM(reasoning_tokens) as reasoning_tokens,
+            SELECT date(started_at, 'unixepoch', 'localtime') as day,
+                   COALESCE(SUM(input_tokens), 0) as input_tokens,
+                   COALESCE(SUM(output_tokens), 0) as output_tokens,
+                   COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+                   COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens,
                    COALESCE(SUM(estimated_cost_usd), 0) as estimated_cost,
                    COALESCE(SUM(actual_cost_usd), 0) as actual_cost,
                    COUNT(*) as sessions,
@@ -5274,29 +5276,44 @@ async def get_usage_analytics(days: int = 30):
             FROM sessions WHERE started_at > ?
             GROUP BY day ORDER BY day
         """, (cutoff,))
-        daily = [dict(r) for r in cur.fetchall()]
+        rows_by_day = {row["day"]: dict(row) for row in cur.fetchall()}
+        today = date.today()
+        daily = []
+        for offset in range(days - 1, -1, -1):
+            day = (today - timedelta(days=offset)).isoformat()
+            daily.append(rows_by_day.get(day, {
+                "day": day,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "reasoning_tokens": 0,
+                "estimated_cost": 0,
+                "actual_cost": 0,
+                "sessions": 0,
+                "api_calls": 0,
+            }))
 
         cur2 = db._conn.execute("""
             SELECT model,
-                   SUM(input_tokens) as input_tokens,
-                   SUM(output_tokens) as output_tokens,
+                   COALESCE(SUM(input_tokens), 0) as input_tokens,
+                   COALESCE(SUM(output_tokens), 0) as output_tokens,
                    COALESCE(SUM(estimated_cost_usd), 0) as estimated_cost,
                    COUNT(*) as sessions,
                    SUM(COALESCE(api_call_count, 0)) as api_calls
-            FROM sessions WHERE started_at > ? AND model IS NOT NULL
+            FROM sessions WHERE started_at > ? AND model IS NOT NULL AND model != ''
             GROUP BY model ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
         """, (cutoff,))
         by_model = [dict(r) for r in cur2.fetchall()]
 
         cur3 = db._conn.execute("""
-            SELECT SUM(input_tokens) as total_input,
-                   SUM(output_tokens) as total_output,
-                   SUM(cache_read_tokens) as total_cache_read,
-                   SUM(reasoning_tokens) as total_reasoning,
+            SELECT COALESCE(SUM(input_tokens), 0) as total_input,
+                   COALESCE(SUM(output_tokens), 0) as total_output,
+                   COALESCE(SUM(cache_read_tokens), 0) as total_cache_read,
+                   COALESCE(SUM(reasoning_tokens), 0) as total_reasoning,
                    COALESCE(SUM(estimated_cost_usd), 0) as total_estimated_cost,
                    COALESCE(SUM(actual_cost_usd), 0) as total_actual_cost,
                    COUNT(*) as total_sessions,
-                   SUM(COALESCE(api_call_count, 0)) as total_api_calls
+                   COALESCE(SUM(COALESCE(api_call_count, 0)), 0) as total_api_calls
             FROM sessions WHERE started_at > ?
         """, (cutoff,))
         totals = dict(cur3.fetchone())

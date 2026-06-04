@@ -784,8 +784,11 @@ def create_profile(
     soul_path = profile_dir / "SOUL.md"
     if not soul_path.exists():
         try:
-            from hermes_cli.default_soul import DEFAULT_SOUL_MD
-            soul_path.write_text(DEFAULT_SOUL_MD, encoding="utf-8")
+            from hermes_cli.default_soul import build_default_soul_md, default_agent_name_for_home
+            soul_path.write_text(
+                build_default_soul_md(default_agent_name_for_home(profile_dir)),
+                encoding="utf-8",
+            )
         except Exception:
             pass  # best-effort — don't fail profile creation over this
 

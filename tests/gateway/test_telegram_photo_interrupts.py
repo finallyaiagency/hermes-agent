@@ -46,3 +46,28 @@ async def test_handle_message_does_not_priority_interrupt_photo_followup():
     assert result is None
     running_agent.interrupt.assert_not_called()
     assert runner.adapters[Platform.TELEGRAM]._pending_messages[session_key] is event
+
+
+@pytest.mark.asyncio
+async def test_handle_message_does_not_drop_voice_followup_media():
+    runner = _make_runner()
+    source = SessionSource(platform=Platform.TELEGRAM, chat_id="12345", chat_type="dm", user_id="u1")
+    session_key = build_session_key(source)
+    running_agent = MagicMock()
+    runner._running_agents[session_key] = running_agent
+
+    event = MessageEvent(
+        text="",
+        message_type=MessageType.VOICE,
+        source=source,
+        media_urls=["/tmp/audio.ogg"],
+        media_types=["audio/ogg"],
+    )
+
+    result = await runner._handle_message(event)
+
+    assert result is None
+    running_agent.interrupt.assert_not_called()
+    queued = runner.adapters[Platform.TELEGRAM]._pending_messages[session_key]
+    assert queued is event
+    assert queued.media_urls == ["/tmp/audio.ogg"]

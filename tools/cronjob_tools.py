@@ -698,7 +698,12 @@ NOTE: The agent's final response is auto-delivered to the target. Put the primar
 user-facing content in the final response. Cron jobs run autonomously with no user
 present — they cannot ask questions or request clarification.
 
-Important safety rule: cron-run sessions should not recursively schedule more cron jobs.""",
+Important safety rule: cron-run sessions should not recursively schedule more cron jobs.
+
+Do not use this tool for Google Calendar appointments. If the user asks to add,
+create, schedule, or update a calendar appointment/event, use
+`google_calendar_event` instead when available. This tool is only for Telegram
+or other message reminders and autonomous recurring jobs.""",
     "parameters": {
         "type": "object",
         "properties": {

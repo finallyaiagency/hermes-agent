@@ -15,7 +15,10 @@ _SCRIPTS_DIR = str(Path(__file__).resolve().parent)
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
+from _python_bootstrap import ensure_supported_interpreter
 from _hermes_home import get_hermes_home
+
+ensure_supported_interpreter()
 
 
 def get_token_path() -> Path:

@@ -22,6 +22,8 @@ except ImportError:  # Python 3.8 compatibility
 from hermes_constants import display_hermes_home, get_hermes_home
 from tools.registry import registry, tool_error, tool_result
 
+_DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
+
 
 GOOGLE_CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/calendar",
@@ -338,6 +340,27 @@ def _drive_fields() -> str:
     return "id, name, mimeType, modifiedTime, webViewLink, parents"
 
 
+def _drive_list_kwargs(**kwargs: Any) -> dict[str, Any]:
+    return {
+        **kwargs,
+        "supportsAllDrives": True,
+        "includeItemsFromAllDrives": True,
+        "corpora": "allDrives",
+    }
+
+
+def _normalize_drive_name(value: str) -> str:
+    return " ".join((value or "").split()).casefold()
+
+
+def _drive_name_variants(value: str) -> list[str]:
+    variants = []
+    for variant in (value, value.lower(), value.upper(), value.title()):
+        if variant and variant not in variants:
+            variants.append(variant)
+    return variants
+
+
 GOOGLE_NATIVE_CREATE_MIME_TYPES = {
     "application/vnd.google-apps.document",
     "application/vnd.google-apps.spreadsheet",
@@ -349,17 +372,39 @@ GOOGLE_NATIVE_CREATE_MIME_TYPES = {
 
 def _find_drive_folder(service, folder_name: str) -> list[dict[str, Any]]:
     escaped = _escape_drive_query(folder_name)
-    result = service.files().list(
+    result = service.files().list(**_drive_list_kwargs(
         q=(
-            "mimeType='application/vnd.google-apps.folder' "
+            f"mimeType='{_DRIVE_FOLDER_MIME_TYPE}' "
             f"and name='{escaped}' and trashed=false"
         ),
         pageSize=10,
         fields=f"files({_drive_fields()})",
-        supportsAllDrives=True,
-        includeItemsFromAllDrives=True,
-    ).execute()
-    return result.get("files", [])
+    )).execute()
+    files = result.get("files", [])
+    if files:
+        return files
+
+    first_word = (folder_name or "").split()[0] if (folder_name or "").split() else folder_name
+    name_clauses = [
+        f"name contains '{_escape_drive_query(variant)}'"
+        for variant in _drive_name_variants(first_word)
+    ]
+    if not name_clauses:
+        return []
+    result = service.files().list(**_drive_list_kwargs(
+        q=(
+            f"mimeType='{_DRIVE_FOLDER_MIME_TYPE}' and trashed=false "
+            f"and ({' or '.join(name_clauses)})"
+        ),
+        pageSize=100,
+        fields=f"files({_drive_fields()})",
+    )).execute()
+    expected = _normalize_drive_name(folder_name)
+    return [
+        file
+        for file in result.get("files", [])
+        if _normalize_drive_name(file.get("name", "")) == expected
+    ]
 
 
 def _resolve_drive_parent(service, parent_id: str | None, folder_name: str | None) -> str | None:
@@ -405,6 +450,7 @@ def google_drive_file(
     parent_id: str | None = None,
     mime_type: str | None = None,
     content: str | None = None,
+    match_text: str | None = None,
     local_path: str | None = None,
     output_path: str | None = None,
     export_mime: str | None = None,
@@ -428,13 +474,11 @@ def google_drive_file(
                 clauses.append(f"name contains '{_escape_drive_query(name)}'")
             if mime_type:
                 clauses.append(f"mimeType='{_escape_drive_query(mime_type)}'")
-            result = drive.files().list(
+            result = drive.files().list(**_drive_list_kwargs(
                 q=" and ".join(clauses),
                 pageSize=max_results,
                 fields=f"files({_drive_fields()})",
-                supportsAllDrives=True,
-                includeItemsFromAllDrives=True,
-            ).execute()
+            )).execute()
             return tool_result(
                 success=True,
                 files=[_format_drive_file(file) for file in result.get("files", [])],
@@ -527,16 +571,44 @@ def google_drive_file(
             ).execute()
             return tool_result(success=True, status="created", file=_format_drive_file(meta))
 
-        if action in {"append", "edit"}:
+        if action in {"append", "edit", "replace_text", "rewrite"}:
             if not file_id or content is None:
                 return tool_error("file_id and content are required", success=False)
             doc = _docs_service().documents().get(documentId=file_id).execute()
-            index = _doc_end_index(doc)
+            if action == "replace_text":
+                if not match_text:
+                    return tool_error("match_text is required for replace_text", success=False)
+                requests = [
+                    {
+                        "replaceAllText": {
+                            "containsText": {"text": match_text, "matchCase": False},
+                            "replaceText": content,
+                        }
+                    }
+                ]
+                status = "replaced"
+            elif action == "rewrite":
+                end_index = _doc_end_index(doc)
+                requests = []
+                if end_index > 1:
+                    requests.append(
+                        {
+                            "deleteContentRange": {
+                                "range": {"startIndex": 1, "endIndex": end_index}
+                            }
+                        }
+                    )
+                requests.append({"insertText": {"location": {"index": 1}, "text": content}})
+                status = "rewritten"
+            else:
+                index = _doc_end_index(doc)
+                requests = [{"insertText": {"location": {"index": index}, "text": content}}]
+                status = "appended"
             _docs_service().documents().batchUpdate(
                 documentId=file_id,
-                body={"requests": [{"insertText": {"location": {"index": index}, "text": content}}]},
+                body={"requests": requests},
             ).execute()
-            return tool_result(success=True, status="appended", file_id=file_id)
+            return tool_result(success=True, status=status, file_id=file_id)
 
         if action == "create_folder":
             if not name:
@@ -644,7 +716,7 @@ def google_drive_file(
             return tool_result(success=True, status="trashed", file_id=file_id, permanent=False)
 
         return tool_error(
-            "action must be one of: list, search, get, read, create, create_doc, create_sheet, append, edit, create_folder, upload, download, delete",
+            "action must be one of: list, search, get, read, create, create_doc, create_sheet, append, edit, replace_text, rewrite, create_folder, upload, download, delete",
             success=False,
         )
     except Exception as exc:
@@ -858,11 +930,12 @@ GOOGLE_CALENDAR_EVENT_SCHEMA = {
 GOOGLE_DRIVE_FILE_SCHEMA = {
     "name": "google_drive_file",
     "description": (
-        "List, search, inspect, read, create, append/edit, upload, download, "
+        "List, search, inspect, read, create, append/edit/rewrite, upload, download, "
         "trash, or permanently delete REAL Google Drive files using the "
         "user's Hermes Google OAuth token. Supports Google Docs text reads "
-        "and appends. For deletes, the tool refuses to run until the user has "
-        "confirmed the exact required deletion phrase."
+        "and edits. Use this to modify Google Docs directly instead of saying "
+        "Docs cannot be edited. For deletes, the tool refuses to run until the "
+        "user has confirmed the exact required deletion phrase."
     ),
     "parameters": {
         "type": "object",
@@ -871,7 +944,10 @@ GOOGLE_DRIVE_FILE_SCHEMA = {
                 "type": "string",
                 "description": (
                     "One of: list, search, get, read, create_doc, append, edit, "
-                    "create_folder, upload, download, delete. Use action=create_sheet "
+                    "replace_text, rewrite, create_folder, upload, download, delete. "
+                    "Use append/edit to add text to a Google Doc, replace_text with "
+                    "match_text to replace matching text, and rewrite to replace the "
+                    "document body. Use action=create_sheet "
                     "or action=create with mime_type=application/vnd.google-apps.spreadsheet "
                     "to create a Google Sheet."
                 ),
@@ -902,7 +978,11 @@ GOOGLE_DRIVE_FILE_SCHEMA = {
             },
             "content": {
                 "type": "string",
-                "description": "Text content for create_doc or append/edit.",
+                "description": "Text content for create_doc, append/edit, replace_text, or rewrite.",
+            },
+            "match_text": {
+                "type": "string",
+                "description": "Text to replace for action=replace_text.",
             },
             "local_path": {
                 "type": "string",
@@ -975,6 +1055,7 @@ registry.register(
         parent_id=args.get("parent_id"),
         mime_type=args.get("mime_type") or args.get("mimeType"),
         content=args.get("content"),
+        match_text=args.get("match_text") or args.get("matchText"),
         local_path=args.get("local_path"),
         output_path=args.get("output_path"),
         export_mime=args.get("export_mime"),

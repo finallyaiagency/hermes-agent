@@ -164,12 +164,11 @@ function TokenBarChart({ daily }: { daily: AnalyticsDailyEntry[] }) {
         >
           {daily.map((d) => {
             const total = d.input_tokens + d.output_tokens;
-            const inputH = Math.round(
-              (d.input_tokens / maxTokens) * CHART_HEIGHT_PX,
-            );
-            const outputH = Math.round(
-              (d.output_tokens / maxTokens) * CHART_HEIGHT_PX,
-            );
+            const totalH = Math.round((total / maxTokens) * CHART_HEIGHT_PX);
+            const visibleH = Math.max(totalH, total > 0 ? 1 : 0);
+            const outputH =
+              total > 0 ? Math.round((d.output_tokens / total) * visibleH) : 0;
+            const inputH = Math.max(visibleH - outputH, 0);
             return (
               <div
                 key={d.day}
@@ -193,14 +192,12 @@ function TokenBarChart({ daily }: { daily: AnalyticsDailyEntry[] }) {
 
                 <div
                   className="w-full bg-[#ffe6cb]/70"
-                  style={{ height: Math.max(inputH, total > 0 ? 1 : 0) }}
+                  style={{ height: inputH }}
                 />
 
                 <div
                   className="w-full bg-emerald-500/70"
-                  style={{
-                    height: Math.max(outputH, d.output_tokens > 0 ? 1 : 0),
-                  }}
+                  style={{ height: outputH }}
                 />
               </div>
             );

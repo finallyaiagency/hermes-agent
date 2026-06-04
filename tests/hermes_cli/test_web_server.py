@@ -1533,6 +1533,7 @@ class TestNewEndpoints:
         assert "totals" in data
         assert "skills" in data
         assert isinstance(data["daily"], list)
+        assert len(data["daily"]) == 7
         assert "total_sessions" in data["totals"]
         assert "total_api_calls" in data["totals"]
         assert data["skills"] == {

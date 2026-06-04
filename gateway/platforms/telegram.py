@@ -1716,7 +1716,7 @@ class TelegramAdapter(BasePlatformAdapter):
 
                 await self._app.updater.start_polling(
                     allowed_updates=Update.ALL_TYPES,
-                    drop_pending_updates=True,
+                    drop_pending_updates=False,
                     error_callback=_polling_error_callback,
                 )
             
@@ -5291,10 +5291,10 @@ class TelegramAdapter(BasePlatformAdapter):
                     _observe_type = MessageType.PHOTO
                 elif _m.video:
                     _observe_type = MessageType.VIDEO
-                elif _m.audio:
-                    _observe_type = MessageType.AUDIO
                 elif _m.voice:
                     _observe_type = MessageType.VOICE
+                elif _m.audio:
+                    _observe_type = MessageType.AUDIO
                 else:
                     _observe_type = MessageType.DOCUMENT
                 self._observe_unmentioned_group_message(_m, _observe_type, update_id=update.update_id)
@@ -5309,10 +5309,10 @@ class TelegramAdapter(BasePlatformAdapter):
             msg_type = MessageType.PHOTO
         elif msg.video:
             msg_type = MessageType.VIDEO
-        elif msg.audio:
-            msg_type = MessageType.AUDIO
         elif msg.voice:
             msg_type = MessageType.VOICE
+        elif msg.audio:
+            msg_type = MessageType.AUDIO
         elif msg.document:
             msg_type = MessageType.DOCUMENT
         else:

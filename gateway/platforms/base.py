@@ -3725,11 +3725,11 @@ class BasePlatformAdapter(ABC):
                 except Exception as e:
                     logger.error("[%s] Busy-session handler failed: %s", self.name, e, exc_info=True)
 
-            # Special case: photo bursts/albums frequently arrive as multiple near-
+            # Special case: media follow-ups frequently arrive as multiple near-
             # simultaneous messages. Queue them without interrupting the active run,
             # then process them immediately after the current task finishes.
-            if event.message_type == MessageType.PHOTO:
-                logger.debug("[%s] Queuing photo follow-up for session %s without interrupt", self.name, session_key)
+            if event.media_urls:
+                logger.debug("[%s] Queuing media follow-up for session %s without interrupt", self.name, session_key)
                 merge_pending_message_event(self._pending_messages, session_key, event)
                 return  # Don't interrupt now - will run after current task completes
 

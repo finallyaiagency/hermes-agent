@@ -53,6 +53,15 @@ class TestEnsureHermesHome:
             assert soul_path.exists()
             assert soul_path.read_text(encoding="utf-8").strip() != ""
 
+    def test_creates_profile_named_soul_md_if_missing(self, tmp_path):
+        profile_home = tmp_path / ".hermes" / "profiles" / "smithers"
+        with patch.dict(os.environ, {"HERMES_HOME": str(profile_home)}):
+            ensure_hermes_home()
+            soul_path = profile_home / "SOUL.md"
+            content = soul_path.read_text(encoding="utf-8")
+            assert content.startswith("You are Smithers, ")
+            assert not content.startswith("You are Hermes Agent, ")
+
     def test_does_not_overwrite_existing_soul_md(self, tmp_path):
         with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
             soul_path = tmp_path / "SOUL.md"

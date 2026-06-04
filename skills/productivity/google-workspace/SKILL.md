@@ -166,6 +166,21 @@ Should print `AUTHENTICATED`. Setup is complete — token refreshes automaticall
 
 ## Usage
 
+### Native Hermes Tools
+
+When the `google_calendar_event` tool is available, use it for real Google
+Calendar appointments. Do not use `cronjob` for calendar events unless the user
+asks for a Telegram/message reminder instead of a calendar entry.
+
+For appointment creation, prefer:
+
+```json
+{"action":"upsert","summary":"Team Standup","start":"2026-03-01T10:00:00","end":"2026-03-01T10:30:00","timezone_name":"America/New_York"}
+```
+
+Only include `attendees` if the user explicitly asks to invite guests. The tool
+does not send email invitations by default.
+
 All commands go through the API script. Set `GAPI` as a shorthand:
 
 ```bash

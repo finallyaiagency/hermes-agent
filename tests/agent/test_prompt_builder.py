@@ -27,7 +27,9 @@ from agent.prompt_builder import (
     SESSION_SEARCH_GUIDANCE,
     PLATFORM_HINTS,
     WSL_ENVIRONMENT_HINT,
+    load_soul_md,
 )
+from hermes_cli.default_soul import DEFAULT_SOUL_MD
 from hermes_cli.nous_subscription import NousFeatureState, NousSubscriptionFeatures
 
 
@@ -540,6 +542,17 @@ class TestBuildContextFilesPrompt:
         (hermes_home / "SOUL.md").write_text("\n\n", encoding="utf-8")
         result = build_context_files_prompt(cwd=str(tmp_path))
         assert result == ""
+
+    def test_legacy_default_soul_uses_profile_name(self, tmp_path, monkeypatch):
+        profile_home = tmp_path / ".hermes" / "profiles" / "smithers"
+        profile_home.mkdir(parents=True)
+        monkeypatch.setenv("HERMES_HOME", str(profile_home))
+        (profile_home / "SOUL.md").write_text("\ufeff" + DEFAULT_SOUL_MD, encoding="utf-8")
+
+        result = load_soul_md()
+
+        assert result.startswith("You are Smithers, ")
+        assert not result.startswith("You are Hermes Agent, ")
 
     def test_blocks_injection_in_agents_md(self, tmp_path):
         (tmp_path / "AGENTS.md").write_text(
