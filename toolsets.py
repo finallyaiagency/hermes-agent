@@ -56,6 +56,8 @@ _HERMES_CORE_TOOLS = [
     "execute_code", "delegate_task",
     # Cronjob management
     "cronjob",
+    # Google Workspace
+    "google_calendar_event", "google_drive_file",
     # Cross-platform messaging (gated on gateway running via check_fn)
     "send_message",
     # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
@@ -182,6 +184,12 @@ TOOLSETS = {
     "cronjob": {
         "description": "Cronjob management tool - create, list, update, pause, resume, remove, and trigger scheduled tasks",
         "tools": ["cronjob"],
+        "includes": []
+    },
+
+    "google-workspace": {
+        "description": "Google Workspace tools for calendar appointments, Drive files, and Docs",
+        "tools": ["google_calendar_event", "google_drive_file"],
         "includes": []
     },
     
@@ -389,6 +397,8 @@ TOOLSETS = {
             "execute_code", "delegate_task",
             # Cronjob management
             "cronjob",
+            # Google Workspace
+            "google_calendar_event", "google_drive_file",
             # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
             "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
 
