@@ -25,7 +25,7 @@ API_PATH = (
 @pytest.fixture
 def bridge_module(monkeypatch, tmp_path):
     hermes_home = tmp_path / ".hermes"
-    hermes_home.mkdir()
+    hermes_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     spec = importlib.util.spec_from_file_location("gws_bridge_test", BRIDGE_PATH)
@@ -38,7 +38,7 @@ def bridge_module(monkeypatch, tmp_path):
 @pytest.fixture
 def api_module(monkeypatch, tmp_path):
     hermes_home = tmp_path / ".hermes"
-    hermes_home.mkdir()
+    hermes_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     spec = importlib.util.spec_from_file_location("gws_api_test", API_PATH)
@@ -348,7 +348,7 @@ def test_api_gmail_send_uses_conventional_mime_header_casing(api_module):
 
     api_module._run_gws = fake_run_gws
     args = api_module.argparse.Namespace(
-        to="recipient@example.com",
+        to="welday007@gmail.com",
         subject="hello",
         body="body",
         html=False,
@@ -362,12 +362,130 @@ def test_api_gmail_send_uses_conventional_mime_header_casing(api_module):
 
     raw = api_module.base64.urlsafe_b64decode(captured["body"]["raw"])
     raw_text = raw.decode()
-    assert "To: recipient@example.com" in raw_text
+    assert "To: welday007@gmail.com" in raw_text
     assert "Subject: hello" in raw_text
     assert "Cc: copy@example.com" in raw_text
     assert "From: sender@example.com" in raw_text
     assert "\nto: " not in raw_text
     assert "\nsubject: " not in raw_text
+
+
+def test_api_gmail_send_non_allowlisted_creates_draft(api_module, monkeypatch):
+    api_module._gws_binary = lambda: None
+    captured = {}
+
+    class FakeDraftCreate:
+        def execute(self):
+            return {
+                "id": "draft-1",
+                "message": {
+                    "id": "msg-draft-1",
+                    "threadId": "thread-1",
+                },
+            }
+
+    class FakeDrafts:
+        def create(self, *, userId, body):
+            captured["userId"] = userId
+            captured["body"] = body
+            return FakeDraftCreate()
+
+    class FakeMessages:
+        def get(self, **kwargs):
+            raise AssertionError("messages.get should not be called for send")
+
+    class FakeUsers:
+        def drafts(self):
+            return FakeDrafts()
+
+        def messages(self):
+            return FakeMessages()
+
+    class FakeService:
+        def users(self):
+            return FakeUsers()
+
+    monkeypatch.setattr(api_module, "build_service", lambda api, version: FakeService())
+    args = api_module.argparse.Namespace(
+        to="recipient@example.com",
+        subject="hello",
+        body="body",
+        html=False,
+        cc="copy@example.com",
+        from_header="sender@example.com",
+        thread_id="thread-1",
+        func=api_module.gmail_send,
+    )
+
+    api_module.gmail_send(args)
+
+    raw = api_module.base64.urlsafe_b64decode(captured["body"]["message"]["raw"])
+    raw_text = raw.decode()
+    assert captured["userId"] == "me"
+    assert captured["body"]["message"]["threadId"] == "thread-1"
+    assert "To: recipient@example.com" in raw_text
+    assert "Subject: hello" in raw_text
+    assert "Cc: copy@example.com" in raw_text
+    assert "From: sender@example.com" in raw_text
+
+
+def test_api_gmail_draft_explicit_creates_draft(api_module, monkeypatch):
+    api_module._gws_binary = lambda: None
+    captured = {}
+
+    class FakeDraftCreate:
+        def execute(self):
+            return {
+                "id": "draft-1",
+                "message": {
+                    "id": "msg-draft-1",
+                    "threadId": "thread-1",
+                },
+            }
+
+    class FakeDrafts:
+        def create(self, *, userId, body):
+            captured["userId"] = userId
+            captured["body"] = body
+            return FakeDraftCreate()
+
+    class FakeMessages:
+        def get(self, **kwargs):
+            raise AssertionError("messages.get should not be called for draft")
+
+    class FakeUsers:
+        def drafts(self):
+            return FakeDrafts()
+
+        def messages(self):
+            return FakeMessages()
+
+    class FakeService:
+        def users(self):
+            return FakeUsers()
+
+    monkeypatch.setattr(api_module, "build_service", lambda api, version: FakeService())
+    args = api_module.argparse.Namespace(
+        to="recipient@example.com",
+        subject="hello",
+        body="body",
+        html=False,
+        cc="copy@example.com",
+        from_header="sender@example.com",
+        thread_id="thread-1",
+        func=api_module.gmail_draft,
+    )
+
+    api_module.gmail_draft(args)
+
+    raw = api_module.base64.urlsafe_b64decode(captured["body"]["message"]["raw"])
+    raw_text = raw.decode()
+    assert captured["userId"] == "me"
+    assert captured["body"]["message"]["threadId"] == "thread-1"
+    assert "To: recipient@example.com" in raw_text
+    assert "Subject: hello" in raw_text
+    assert "Cc: copy@example.com" in raw_text
+    assert "From: sender@example.com" in raw_text
 
 
 @pytest.mark.parametrize(
@@ -398,7 +516,7 @@ def test_api_gmail_reply_reads_headers_case_insensitively_and_uses_conventional_
                 "threadId": "thread-1",
                 "payload": {
                     "headers": [
-                        {"name": from_name, "value": "sender@example.com"},
+                        {"name": from_name, "value": "welday007@gmail.com"},
                         {"name": subject_name, "value": "case bug"},
                         {"name": message_id_name, "value": "<msg-1@example.com>"},
                     ],
@@ -424,7 +542,7 @@ def test_api_gmail_reply_reads_headers_case_insensitively_and_uses_conventional_
     assert body["threadId"] == "thread-1"
     raw = api_module.base64.urlsafe_b64decode(body["raw"])
     raw_text = raw.decode()
-    assert "To: sender@example.com" in raw_text
+    assert "To: welday007@gmail.com" in raw_text
     assert "Subject: Re: case bug" in raw_text
     assert "From: recipient@example.com" in raw_text
     assert "In-Reply-To: <msg-1@example.com>" in raw_text
@@ -433,6 +551,76 @@ def test_api_gmail_reply_reads_headers_case_insensitively_and_uses_conventional_
     assert "\nsubject: " not in raw_text
     assert "\nin-reply-to: " not in raw_text
     assert "\nreferences: " not in raw_text
+
+
+def test_api_gmail_reply_non_allowlisted_creates_draft(api_module, monkeypatch):
+    api_module._gws_binary = lambda: None
+    captured = {}
+
+    class FakeDraftCreate:
+        def execute(self):
+            return {
+                "id": "draft-2",
+                "message": {
+                    "id": "msg-draft-2",
+                    "threadId": "thread-1",
+                },
+            }
+
+    class FakeDrafts:
+        def create(self, *, userId, body):
+            captured["userId"] = userId
+            captured["body"] = body
+            return FakeDraftCreate()
+
+    class FakeMessageGet:
+        def execute(self):
+            return {
+                "id": "msg-1",
+                "threadId": "thread-1",
+                "payload": {
+                    "headers": [
+                        {"name": "From", "value": "sender@example.com"},
+                        {"name": "Subject", "value": "case bug"},
+                        {"name": "Message-ID", "value": "<msg-1@example.com>"},
+                    ],
+                },
+            }
+
+    class FakeMessages:
+        def get(self, **kwargs):
+            return FakeMessageGet()
+
+    class FakeUsers:
+        def drafts(self):
+            return FakeDrafts()
+
+        def messages(self):
+            return FakeMessages()
+
+    class FakeService:
+        def users(self):
+            return FakeUsers()
+
+    monkeypatch.setattr(api_module, "build_service", lambda api, version: FakeService())
+    args = api_module.argparse.Namespace(
+        message_id="msg-1",
+        body="reply body",
+        from_header="recipient@example.com",
+        func=api_module.gmail_reply,
+    )
+
+    api_module.gmail_reply(args)
+
+    raw = api_module.base64.urlsafe_b64decode(captured["body"]["message"]["raw"])
+    raw_text = raw.decode()
+    assert captured["userId"] == "me"
+    assert captured["body"]["message"]["threadId"] == "thread-1"
+    assert "To: sender@example.com" in raw_text
+    assert "Subject: Re: case bug" in raw_text
+    assert "From: recipient@example.com" in raw_text
+    assert "In-Reply-To: <msg-1@example.com>" in raw_text
+    assert "References: <msg-1@example.com>" in raw_text
 
 
 def test_api_get_credentials_refresh_persists_authorized_user_type(api_module, monkeypatch):

@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from hermes_constants import display_hermes_home
+from hermes_constants import display_hermes_home, get_bundled_skills_dir, get_hermes_home
 from agent.skill_preprocessing import (
     expand_inline_shell as _expand_inline_shell,
     load_skills_config as _load_skills_config,
@@ -64,6 +64,9 @@ def _load_skill_payload(skill_identifier: str, task_id: str | None = None) -> tu
         if identifier_path.is_absolute():
             normalized = None
             trusted_roots = [SKILLS_DIR]
+            bundled_skills_dir = get_bundled_skills_dir(Path(__file__).parent.parent / "skills")
+            if bundled_skills_dir.exists():
+                trusted_roots.append(bundled_skills_dir)
             try:
                 trusted_roots.extend(get_external_skills_dirs())
             except Exception:
@@ -270,16 +273,28 @@ def scan_skill_commands() -> Dict[str, Dict[str, Any]]:
     _skill_commands_platform = _resolve_skill_commands_platform()
     _skill_commands = {}
     try:
-        from tools.skills_tool import SKILLS_DIR, _parse_frontmatter, skill_matches_platform, skill_matches_environment, _get_disabled_skill_names
+        from tools.skills_tool import (
+            HERMES_HOME,
+            SKILLS_DIR,
+            _parse_frontmatter,
+            skill_matches_platform,
+            skill_matches_environment,
+            _get_disabled_skill_names,
+        )
         from agent.skill_utils import get_external_skills_dirs, iter_skill_index_files
         disabled = _get_disabled_skill_names()
         seen_names: set = set()
 
-        # Scan local dir first, then external dirs
+        # Scan local dir first, then external dirs, then the bundled source
+        # tree as a fallback for profiles that have not been seeded yet.
         dirs_to_scan = []
         if SKILLS_DIR.exists():
             dirs_to_scan.append(SKILLS_DIR)
         dirs_to_scan.extend(get_external_skills_dirs())
+        if SKILLS_DIR == HERMES_HOME / "skills":
+            bundled_skills_dir = get_bundled_skills_dir(Path(__file__).parent.parent / "skills")
+            if bundled_skills_dir.exists() and bundled_skills_dir not in dirs_to_scan:
+                dirs_to_scan.append(bundled_skills_dir)
 
         for scan_dir in dirs_to_scan:
             for skill_md in iter_skill_index_files(scan_dir, "SKILL.md"):
