@@ -65,10 +65,7 @@ class TestScanSkillCommands:
 
     def test_excludes_incompatible_platform(self, tmp_path):
         """macOS-only skills should not register slash commands on Linux."""
-        with (
-            patch("tools.skills_tool.SKILLS_DIR", tmp_path),
-            patch("agent.skill_utils.sys") as mock_sys,
-        ):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path), patch("agent.skill_utils.sys") as mock_sys:
             mock_sys.platform = "linux"
             _make_skill(tmp_path, "imessage", frontmatter_extra="platforms: [macos]\n")
             _make_skill(tmp_path, "web-search")
@@ -78,10 +75,7 @@ class TestScanSkillCommands:
 
     def test_includes_matching_platform(self, tmp_path):
         """macOS-only skills should register slash commands on macOS."""
-        with (
-            patch("tools.skills_tool.SKILLS_DIR", tmp_path),
-            patch("agent.skill_utils.sys") as mock_sys,
-        ):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path), patch("agent.skill_utils.sys") as mock_sys:
             mock_sys.platform = "darwin"
             _make_skill(tmp_path, "imessage", frontmatter_extra="platforms: [macos]\n")
             result = scan_skill_commands()
@@ -89,14 +83,21 @@ class TestScanSkillCommands:
 
     def test_universal_skill_on_any_platform(self, tmp_path):
         """Skills without platforms field should register on any platform."""
-        with (
-            patch("tools.skills_tool.SKILLS_DIR", tmp_path),
-            patch("agent.skill_utils.sys") as mock_sys,
-        ):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path), patch("agent.skill_utils.sys") as mock_sys:
             mock_sys.platform = "win32"
             _make_skill(tmp_path, "generic-tool")
             result = scan_skill_commands()
         assert "/generic-tool" in result
+
+    def test_restores_wn_briefing_skill(self):
+        """The repo should expose /wn as the what-next briefing command."""
+        result = scan_skill_commands()
+        assert "/wn" in result
+        assert result["/wn"]["name"] == "wn"
+        assert "what's next" in result["/wn"]["description"].lower()
+        message = build_skill_invocation_message("/wn")
+        assert message is not None
+        assert "What's Next Briefing" in message
 
     def test_excludes_disabled_skills(self, tmp_path):
         """Disabled skills should not register slash commands."""

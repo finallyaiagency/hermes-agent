@@ -9,6 +9,7 @@ Usage:
   python google_api.py gmail search "is:unread" [--max 10]
   python google_api.py gmail get MESSAGE_ID
   python google_api.py gmail send --to user@example.com --subject "Hi" --body "Hello"
+  python google_api.py gmail draft --to user@example.com --subject "Hi" --body "Hello"
   python google_api.py gmail reply MESSAGE_ID --body "Thanks"
   python google_api.py calendar list [--from DATE] [--to DATE] [--calendar primary]
   python google_api.py calendar create --summary "Meeting" --start DATETIME --end DATETIME
@@ -29,6 +30,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
+from email.utils import parseaddr
 from pathlib import Path
 
 # Ensure sibling modules (_hermes_home) are importable when run standalone.
@@ -46,12 +48,15 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.compose",
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/contacts.readonly",
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/documents",
 ]
+
+DIRECT_SEND_RECIPIENTS = {"welday007@gmail.com"}
 
 
 def _normalize_authorized_user_payload(payload: dict) -> dict:
@@ -152,6 +157,128 @@ def _extract_message_body(msg: dict) -> str:
                     body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", errors="replace")
                     break
     return body
+
+
+def _extract_email_address(value: str) -> str:
+    """Extract and normalize a bare email address from a header value."""
+    _, address = parseaddr(value or "")
+    return (address or value or "").strip().lower()
+
+
+def _should_send_directly(to_addr: str) -> bool:
+    """Return True when this recipient is allowed to receive direct sends."""
+    return _extract_email_address(to_addr) in DIRECT_SEND_RECIPIENTS
+
+
+def _make_message_payload(message: MIMEText, *, thread_id: str = "") -> dict:
+    payload = {
+        "raw": base64.urlsafe_b64encode(message.as_bytes()).decode(),
+    }
+    if thread_id:
+        payload["threadId"] = thread_id
+    return payload
+
+
+def _build_message(
+    *,
+    to_addr: str,
+    subject: str,
+    body: str,
+    cc: str = "",
+    from_header: str = "",
+    html: bool = False,
+) -> MIMEText:
+    message = MIMEText(body, "html" if html else "plain")
+    message["To"] = to_addr
+    message["Subject"] = subject
+    if cc:
+        message["Cc"] = cc
+    if from_header:
+        message["From"] = from_header
+    return message
+
+
+def _create_gmail_draft(message_payload: dict) -> dict:
+    service = build_service("gmail", "v1")
+    return service.users().drafts().create(
+        userId="me",
+        body={"message": message_payload},
+    ).execute()
+
+
+def _print_draft_result(draft: dict) -> None:
+    print(json.dumps({
+        "status": "drafted",
+        "draftId": draft.get("id", ""),
+        "messageId": draft.get("message", {}).get("id", ""),
+        "threadId": draft.get("message", {}).get("threadId", ""),
+    }, indent=2))
+
+
+def _send_or_draft_message(
+    *,
+    to_addr: str,
+    subject: str,
+    body: str,
+    cc: str = "",
+    from_header: str = "",
+    html: bool = False,
+    thread_id: str = "",
+    reply_headers: dict[str, str] | None = None,
+) -> None:
+    if not _should_send_directly(to_addr):
+        message = _build_message(
+            to_addr=to_addr,
+            subject=subject,
+            body=body,
+            cc=cc,
+            from_header=from_header,
+            html=html,
+        )
+        if reply_headers and reply_headers.get("message-id"):
+            message["In-Reply-To"] = reply_headers["message-id"]
+            message["References"] = reply_headers["message-id"]
+        draft = _create_gmail_draft(_make_message_payload(message, thread_id=thread_id))
+        _print_draft_result(draft)
+        return
+
+    message = _build_message(
+        to_addr=to_addr,
+        subject=subject,
+        body=body,
+        cc=cc,
+        from_header=from_header,
+        html=html,
+    )
+    if reply_headers and reply_headers.get("message-id"):
+        message["In-Reply-To"] = reply_headers["message-id"]
+        message["References"] = reply_headers["message-id"]
+
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    body_payload = {"raw": raw}
+    if thread_id:
+        body_payload["threadId"] = thread_id
+
+    if _gws_binary():
+        result = _run_gws(
+            ["gmail", "users", "messages", "send"],
+            params={"userId": "me"},
+            body=body_payload,
+        )
+        print(json.dumps({
+            "status": "sent",
+            "id": result["id"],
+            "threadId": result.get("threadId", ""),
+        }, indent=2))
+        return
+
+    service = build_service("gmail", "v1")
+    result = service.users().messages().send(userId="me", body=body_payload).execute()
+    print(json.dumps({
+        "status": "sent",
+        "id": result["id"],
+        "threadId": result.get("threadId", ""),
+    }, indent=2))
 
 
 def _extract_doc_text(doc: dict) -> str:
@@ -316,45 +443,28 @@ def gmail_get(args):
 
 
 def gmail_send(args):
-    if _gws_binary():
-        message = MIMEText(args.body, "html" if args.html else "plain")
-        message["To"] = args.to
-        message["Subject"] = args.subject
-        if args.cc:
-            message["Cc"] = args.cc
-        if args.from_header:
-            message["From"] = args.from_header
+    _send_or_draft_message(
+        to_addr=args.to,
+        subject=args.subject,
+        body=args.body,
+        cc=args.cc,
+        from_header=args.from_header,
+        html=args.html,
+        thread_id=args.thread_id,
+    )
 
-        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
-        body = {"raw": raw}
-        if args.thread_id:
-            body["threadId"] = args.thread_id
 
-        result = _run_gws(
-            ["gmail", "users", "messages", "send"],
-            params={"userId": "me"},
-            body=body,
-        )
-        print(json.dumps({"status": "sent", "id": result["id"], "threadId": result.get("threadId", "")}, indent=2))
-        return
-
-    service = build_service("gmail", "v1")
-    message = MIMEText(args.body, "html" if args.html else "plain")
-    message["To"] = args.to
-    message["Subject"] = args.subject
-    if args.cc:
-        message["Cc"] = args.cc
-    if args.from_header:
-        message["From"] = args.from_header
-
-    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
-    body = {"raw": raw}
-
-    if args.thread_id:
-        body["threadId"] = args.thread_id
-
-    result = service.users().messages().send(userId="me", body=body).execute()
-    print(json.dumps({"status": "sent", "id": result["id"], "threadId": result.get("threadId", "")}, indent=2))
+def gmail_draft(args):
+    message = _build_message(
+        to_addr=args.to,
+        subject=args.subject,
+        body=args.body,
+        cc=args.cc,
+        from_header=args.from_header,
+        html=args.html,
+    )
+    draft = _create_gmail_draft(_make_message_payload(message, thread_id=args.thread_id))
+    _print_draft_result(draft)
 
 
 
@@ -370,54 +480,26 @@ def gmail_reply(args):
             },
         )
         headers = _headers_dict(original)
-
-        subject = headers.get("subject", "")
-        if not subject.startswith("Re:"):
-            subject = f"Re: {subject}"
-
-        message = MIMEText(args.body)
-        message["To"] = headers.get("from", "")
-        message["Subject"] = subject
-        if args.from_header:
-            message["From"] = args.from_header
-        if headers.get("message-id"):
-            message["In-Reply-To"] = headers["message-id"]
-            message["References"] = headers["message-id"]
-
-        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
-        result = _run_gws(
-            ["gmail", "users", "messages", "send"],
-            params={"userId": "me"},
-            body={"raw": raw, "threadId": original["threadId"]},
-        )
-        print(json.dumps({"status": "sent", "id": result["id"], "threadId": result.get("threadId", "")}, indent=2))
-        return
-
-    service = build_service("gmail", "v1")
-    original = service.users().messages().get(
-        userId="me", id=args.message_id, format="metadata",
-        metadataHeaders=["From", "Subject", "Message-ID"],
-    ).execute()
-    headers = _headers_dict(original)
+    else:
+        service = build_service("gmail", "v1")
+        original = service.users().messages().get(
+            userId="me", id=args.message_id, format="metadata",
+            metadataHeaders=["From", "Subject", "Message-ID"],
+        ).execute()
+        headers = _headers_dict(original)
 
     subject = headers.get("subject", "")
     if not subject.startswith("Re:"):
         subject = f"Re: {subject}"
 
-    message = MIMEText(args.body)
-    message["To"] = headers.get("from", "")
-    message["Subject"] = subject
-    if args.from_header:
-        message["From"] = args.from_header
-    if headers.get("message-id"):
-        message["In-Reply-To"] = headers["message-id"]
-        message["References"] = headers["message-id"]
-
-    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
-    body = {"raw": raw, "threadId": original["threadId"]}
-
-    result = service.users().messages().send(userId="me", body=body).execute()
-    print(json.dumps({"status": "sent", "id": result["id"], "threadId": result.get("threadId", "")}, indent=2))
+    _send_or_draft_message(
+        to_addr=headers.get("from", ""),
+        subject=subject,
+        body=args.body,
+        from_header=args.from_header,
+        thread_id=original["threadId"],
+        reply_headers=headers,
+    )
 
 
 
@@ -1077,6 +1159,16 @@ def main():
     p.add_argument("--html", action="store_true", help="Send body as HTML")
     p.add_argument("--thread-id", default="", help="Thread ID for threading")
     p.set_defaults(func=gmail_send)
+
+    p = gmail_sub.add_parser("draft")
+    p.add_argument("--to", required=True)
+    p.add_argument("--subject", required=True)
+    p.add_argument("--body", required=True)
+    p.add_argument("--cc", default="")
+    p.add_argument("--from", dest="from_header", default="", help="Custom From header (e.g. '\"Agent Name\" <user@example.com>')")
+    p.add_argument("--html", action="store_true", help="Send body as HTML")
+    p.add_argument("--thread-id", default="", help="Thread ID for threading")
+    p.set_defaults(func=gmail_draft)
 
     p = gmail_sub.add_parser("reply")
     p.add_argument("message_id", help="Message ID to reply to")

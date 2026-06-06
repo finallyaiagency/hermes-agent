@@ -69,7 +69,7 @@ Usage:
 import json
 import logging
 
-from hermes_constants import get_hermes_home, display_hermes_home
+from hermes_constants import get_bundled_skills_dir, get_hermes_home, display_hermes_home
 import os
 import re
 from enum import Enum
@@ -156,6 +156,18 @@ def skill_matches_platform(frontmatter: Dict[str, Any]) -> bool:
     as a public re-export so existing callers don't need updating.
     """
     from agent.skill_utils import skill_matches_platform as _impl
+    return _impl(frontmatter)
+
+
+def skill_matches_environment(frontmatter: Dict[str, Any]) -> bool:
+    """Check if a skill is relevant to the current runtime environment.
+
+    Delegates to ``agent.skill_utils.skill_matches_environment`` — kept here
+    as a public re-export so existing callers don't need updating. This is an
+    offer-time relevance gate (kanban/docker/s6), NOT a hard-compatibility gate;
+    explicit skill loads bypass it.
+    """
+    from agent.skill_utils import skill_matches_environment as _impl
     return _impl(frontmatter)
 
 
@@ -305,7 +317,13 @@ def _capture_required_environment_variables(
         }
 
     missing_names = [entry["name"] for entry in missing_entries]
-    if _is_gateway_surface():
+    # Most gateway surfaces (messaging platforms) can't prompt for a secret, so
+    # they short-circuit to the "unsupported" hint. Interactive gateway surfaces
+    # — the desktop app / TUI — set HERMES_INTERACTIVE and register a
+    # secret-capture callback that routes to a secure secret.request overlay, so
+    # they fall through and actually prompt. (HERMES_INTERACTIVE is the same flag
+    # tools/approval.py uses to tell an interactive surface from a messaging one.)
+    if _is_gateway_surface() and not env_var_enabled("HERMES_INTERACTIVE"):
         return {
             "missing_names": missing_names,
             "setup_skipped": False,
@@ -566,11 +584,17 @@ def _find_all_skills(*, skip_disabled: bool = False) -> List[Dict[str, Any]]:
     # Load disabled set once (not per-skill)
     disabled = set() if skip_disabled else _get_disabled_skill_names()
 
-    # Scan local dir first, then external dirs (local takes precedence)
+    # Scan local dir first, then external dirs (local takes precedence), then
+    # the bundled source tree as a fallback for profiles that have not yet
+    # been seeded from the repo's bundled skills.
     dirs_to_scan = []
     if SKILLS_DIR.exists():
         dirs_to_scan.append(SKILLS_DIR)
     dirs_to_scan.extend(get_external_skills_dirs())
+    if SKILLS_DIR == HERMES_HOME / "skills":
+        bundled_skills_dir = get_bundled_skills_dir(Path(__file__).parent.parent / "skills")
+        if bundled_skills_dir.exists() and bundled_skills_dir not in dirs_to_scan:
+            dirs_to_scan.append(bundled_skills_dir)
 
     for scan_dir in dirs_to_scan:
         for skill_md in iter_skill_index_files(scan_dir, "SKILL.md"):
@@ -584,6 +608,9 @@ def _find_all_skills(*, skip_disabled: bool = False) -> List[Dict[str, Any]]:
                 frontmatter, body = _parse_frontmatter(content)
 
                 if not skill_matches_platform(frontmatter):
+                    continue
+
+                if not skill_matches_environment(frontmatter):
                     continue
 
                 name = frontmatter.get("name", skill_dir.name)[:MAX_NAME_LENGTH]
@@ -896,11 +923,16 @@ def skill_view(
 
         from agent.skill_utils import get_external_skills_dirs
 
-        # Build list of all skill directories to search
+        # Build list of all skill directories to search. The bundled source
+        # tree is a fallback for profiles that have not been seeded yet.
         all_dirs = []
         if SKILLS_DIR.exists():
             all_dirs.append(SKILLS_DIR)
         all_dirs.extend(get_external_skills_dirs())
+        if SKILLS_DIR == HERMES_HOME / "skills":
+            bundled_skills_dir = get_bundled_skills_dir(Path(__file__).parent.parent / "skills")
+            if bundled_skills_dir.exists() and bundled_skills_dir not in all_dirs:
+                all_dirs.append(bundled_skills_dir)
 
         if not all_dirs:
             return json.dumps(
@@ -1116,7 +1148,7 @@ def skill_view(
                 # Scan for all readable files
                 for f in skill_dir.rglob("*"):
                     if f.is_file() and f.name != "SKILL.md":
-                        rel = str(f.relative_to(skill_dir))
+                        rel = f.relative_to(skill_dir).as_posix()
                         if rel.startswith("references/"):
                             available_files["references"].append(rel)
                         elif rel.startswith("templates/"):
@@ -1189,7 +1221,7 @@ def skill_view(
             references_dir = skill_dir / "references"
             if references_dir.exists():
                 reference_files = [
-                    str(f.relative_to(skill_dir)) for f in references_dir.glob("*.md")
+                    f.relative_to(skill_dir).as_posix() for f in references_dir.glob("*.md")
                 ]
 
             templates_dir = skill_dir / "templates"
@@ -1203,25 +1235,25 @@ def skill_view(
                     "*.tex",
                     "*.sh",
                 ]:
-                    template_files.extend(
-                        [
-                            str(f.relative_to(skill_dir))
-                            for f in templates_dir.rglob(ext)
-                        ]
-                    )
+                        template_files.extend(
+                            [
+                                f.relative_to(skill_dir).as_posix()
+                                for f in templates_dir.rglob(ext)
+                            ]
+                        )
 
             # assets/ — agentskills.io standard directory for supplementary files
             assets_dir = skill_dir / "assets"
             if assets_dir.exists():
                 for f in assets_dir.rglob("*"):
                     if f.is_file():
-                        asset_files.append(str(f.relative_to(skill_dir)))
+                        asset_files.append(f.relative_to(skill_dir).as_posix())
 
             scripts_dir = skill_dir / "scripts"
             if scripts_dir.exists():
                 for ext in ["*.py", "*.sh", "*.bash", "*.js", "*.ts", "*.rb"]:
                     script_files.extend(
-                        [str(f.relative_to(skill_dir)) for f in scripts_dir.glob(ext)]
+                        [f.relative_to(skill_dir).as_posix() for f in scripts_dir.glob(ext)]
                     )
 
         # Read tags/related_skills with backward compat:
