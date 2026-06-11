@@ -258,6 +258,26 @@ class TestTelegramBotCommands:
         assert "codex_runtime" in names
         assert "codex-runtime" not in names
 
+    def test_includes_quick_commands_from_config(self, monkeypatch):
+        """Telegram menu should surface configured quick commands too."""
+        from hermes_cli import config as config_mod
+
+        monkeypatch.setattr(
+            config_mod,
+            "read_raw_config",
+            lambda: {
+                "quick_commands": {
+                    "WN": {
+                        "type": "exec",
+                        "command": "echo what's new",
+                    }
+                }
+            },
+        )
+
+        names = {name for name, _ in telegram_bot_commands()}
+        assert "wn" in names
+
 
 class TestSlackSubcommandMap:
     def test_returns_dict(self):
