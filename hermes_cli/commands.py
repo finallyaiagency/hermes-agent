@@ -477,6 +477,41 @@ def _iter_plugin_command_entries() -> list[tuple[str, str, str]]:
     return entries
 
 
+def _iter_quick_command_entries() -> list[tuple[str, str]]:
+    """Yield (name, description) tuples for quick commands surfaced in Telegram.
+
+    Quick commands are configured in ``config.yaml`` and dispatch directly
+    without invoking the LLM. Telegram can expose them in its BotCommand menu
+    just like built-ins and plugin commands.
+    """
+    try:
+        from hermes_cli.config import read_raw_config
+        cfg = read_raw_config()
+    except Exception:
+        return []
+
+    quick_commands = cfg.get("quick_commands", {}) if isinstance(cfg, dict) else {}
+    if not isinstance(quick_commands, dict):
+        return []
+
+    entries: list[tuple[str, str]] = []
+    for name, meta in quick_commands.items():
+        if not isinstance(name, str) or not isinstance(meta, dict):
+            continue
+        qtype = str(meta.get("type") or "").strip().lower()
+        if qtype not in {"exec", "alias"}:
+            continue
+        tg_name = _sanitize_telegram_name(name)
+        if not tg_name:
+            continue
+        if qtype == "alias":
+            description = str(meta.get("target") or f"Quick alias /{name}")
+        else:
+            description = str(meta.get("description") or meta.get("command") or f"Quick command /{name}")
+        entries.append((tg_name, description))
+    return entries
+
+
 def telegram_bot_commands() -> list[tuple[str, str]]:
     """Return (command_name, description) pairs for Telegram setMyCommands.
 
@@ -508,6 +543,12 @@ def telegram_bot_commands() -> list[tuple[str, str]]:
         tg_name = _sanitize_telegram_name(name)
         if tg_name:
             result.append((tg_name, description))
+    seen = {name for name, _desc in result}
+    for name, description in _iter_quick_command_entries():
+        if name in seen:
+            continue
+        result.append((name, description))
+        seen.add(name)
     return result
 
 
