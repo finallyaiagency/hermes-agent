@@ -17,6 +17,7 @@ Usage:
 """
 
 import json
+import re
 import time
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -31,6 +32,7 @@ from agent.usage_pricing import (
 )
 
 _DEFAULT_PRICING = DEFAULT_PRICING
+_NETWORK_SOURCE_RE = re.compile(r"\b(cellular|wifi|wi-fi|wireless|tower|towers)\b", re.I)
 
 
 def _has_known_pricing(model_name: str, provider: str = None, base_url: str = None) -> bool:
@@ -90,6 +92,10 @@ def _bar_chart(values: List[int], max_width: int = 20) -> List[str]:
     return ["█" * max(1, int(v / peak * max_width)) if v > 0 else "" for v in values]
 
 
+def _is_network_source(source: str | None) -> bool:
+    return bool(source and _NETWORK_SOURCE_RE.search(source))
+
+
 class InsightsEngine:
     """
     Analyzes session history and produces usage insights.
@@ -123,6 +129,7 @@ class InsightsEngine:
 
         # Gather raw data
         sessions = self._get_sessions(cutoff, source)
+        sessions = [s for s in sessions if not _is_network_source(s.get("source"))]
         tool_usage = self._get_tool_usage(cutoff, source)
         skill_usage = self._get_skill_usage(cutoff, source)
         message_stats = self._get_message_stats(cutoff, source)

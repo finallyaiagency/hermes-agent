@@ -7387,6 +7387,13 @@ async def get_usage_analytics(days: int = 30):
     db = SessionDB()
     try:
         cutoff = time.time() - (days * 86400)
+        network_source_clause = """
+            AND LOWER(COALESCE(source, '')) NOT LIKE '%cellular%'
+            AND LOWER(COALESCE(source, '')) NOT LIKE '%wifi%'
+            AND LOWER(COALESCE(source, '')) NOT LIKE '%wi-fi%'
+            AND LOWER(COALESCE(source, '')) NOT LIKE '%wireless%'
+            AND LOWER(COALESCE(source, '')) NOT LIKE '%tower%'
+        """
         cur = db._conn.execute("""
             SELECT date(started_at, 'unixepoch') as day,
                    SUM(input_tokens) as input_tokens,
@@ -7398,6 +7405,7 @@ async def get_usage_analytics(days: int = 30):
                    COUNT(*) as sessions,
                    SUM(COALESCE(api_call_count, 0)) as api_calls
             FROM sessions WHERE started_at > ?
+            """ + network_source_clause + """
             GROUP BY day ORDER BY day
         """, (cutoff,))
         daily = [dict(r) for r in cur.fetchall()]
@@ -7410,6 +7418,7 @@ async def get_usage_analytics(days: int = 30):
                    COUNT(*) as sessions,
                    SUM(COALESCE(api_call_count, 0)) as api_calls
             FROM sessions WHERE started_at > ? AND model IS NOT NULL
+            """ + network_source_clause + """
             GROUP BY model ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
         """, (cutoff,))
         by_model = [dict(r) for r in cur2.fetchall()]
@@ -7424,6 +7433,7 @@ async def get_usage_analytics(days: int = 30):
                    COUNT(*) as total_sessions,
                    SUM(COALESCE(api_call_count, 0)) as total_api_calls
             FROM sessions WHERE started_at > ?
+            """ + network_source_clause + """
         """, (cutoff,))
         totals = dict(cur3.fetchone())
         insights_report = InsightsEngine(db).generate(days=days)

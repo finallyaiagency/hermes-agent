@@ -12286,21 +12286,21 @@ def cmd_dashboard(args):
             sys.exit(1)
         print(f"→ Skipping web UI build (--skip-build); using dist at {_dist_root}")
 
-    # Discover and load plugins so any DashboardAuthProvider plugin
-    # (e.g. plugins/dashboard_auth/nous) registers BEFORE start_server's
-    # fail-closed gate check runs. The top-level argparse setup skips
-    # plugin discovery for built-in subcommands like ``dashboard`` to
-    # save ~500ms startup; we have to trigger it explicitly here because
-    # the dashboard's server-side runtime depends on plugin-registered
-    # providers (image_gen, web, dashboard_auth, …).
-    try:
-        from hermes_cli.plugins import discover_plugins
-        discover_plugins()
-    except Exception as exc:
-        # Discovery failures must not block dashboard startup outright —
-        # log and proceed; the gate's fail-closed branch will surface
-        # the missing-provider state if it matters.
-        print(f"⚠ Plugin discovery failed: {exc}", file=sys.stderr)
+    # Only force plugin discovery when the OAuth auth gate is actually in
+    # play. On loopback dashboards the gate stays off, so delaying startup on
+    # plugin scans just makes the local web UI feel broken if a plugin import
+    # hangs or misbehaves. The auth-gated path still discovers plugins so any
+    # DashboardAuthProvider can register before start_server() checks it.
+    from hermes_cli.web_server import should_require_auth as _should_require_auth
+    if _should_require_auth(args.host, getattr(args, "insecure", False)):
+        try:
+            from hermes_cli.plugins import discover_plugins
+            discover_plugins()
+        except Exception as exc:
+            # Discovery failures must not block dashboard startup outright —
+            # log and proceed; the gate's fail-closed branch will surface
+            # the missing-provider state if it matters.
+            print(f"⚠ Plugin discovery failed: {exc}", file=sys.stderr)
 
     from hermes_cli.web_server import start_server
 

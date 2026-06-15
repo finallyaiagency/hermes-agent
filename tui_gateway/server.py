@@ -136,6 +136,13 @@ try:
 except (ValueError, TypeError):
     _slash_timeout = 45.0
 _SLASH_WORKER_TIMEOUT_S = max(5.0, _slash_timeout)
+try:
+    _agent_prompt_init_timeout = float(
+        os.environ.get("HERMES_TUI_AGENT_PROMPT_INIT_TIMEOUT_S") or "180"
+    )
+except (ValueError, TypeError):
+    _agent_prompt_init_timeout = 180.0
+_AGENT_PROMPT_INIT_TIMEOUT_S = max(30.0, _agent_prompt_init_timeout)
 
 # When a WebSocket client (the dashboard's embedded-chat tab / desktop app)
 # disconnects, ``tui_gateway.ws`` detaches the transport but intentionally
@@ -4155,7 +4162,7 @@ def _(rid, params: dict) -> dict:
     _start_agent_build(sid, session)
 
     def run_after_agent_ready() -> None:
-        err = _wait_agent(session, rid)
+        err = _wait_agent(session, rid, timeout=_AGENT_PROMPT_INIT_TIMEOUT_S)
         if err:
             _emit(
                 "error",

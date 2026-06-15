@@ -2453,6 +2453,47 @@ def test_prompt_submit_sets_approval_session_key(monkeypatch):
     assert captured["session_key"] == "session-key"
 
 
+def test_prompt_submit_uses_prompt_init_timeout(monkeypatch):
+    captured = {}
+
+    class _ImmediateThread:
+        def __init__(self, target=None, daemon=None):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    session = _session(agent=None, agent_ready=threading.Event(), agent_error=None)
+    server._sessions["sid"] = session
+    monkeypatch.setattr(server.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(server, "_start_agent_build", lambda sid, sess: None)
+    monkeypatch.setattr(server, "_ensure_session_db_row", lambda sess: None)
+    monkeypatch.setattr(server, "_start_inflight_turn", lambda sess, text: None)
+    monkeypatch.setattr(server, "_clear_inflight_turn", lambda sess: None)
+    monkeypatch.setattr(server, "_emit", lambda *args, **kwargs: None)
+    monkeypatch.setattr(server, "_AGENT_PROMPT_INIT_TIMEOUT_S", 123.0)
+
+    def fake_wait_agent(sess, rid, timeout=30.0):
+        captured["timeout"] = timeout
+        return server._err(rid, 5032, "agent initialization timed out")
+
+    monkeypatch.setattr(server, "_wait_agent", fake_wait_agent)
+
+    try:
+        resp = server.handle_request(
+            {
+                "id": "1",
+                "method": "prompt.submit",
+                "params": {"session_id": "sid", "text": "ping"},
+            }
+        )
+
+        assert resp["result"]["status"] == "streaming"
+        assert captured["timeout"] == 123.0
+    finally:
+        server._sessions.pop("sid", None)
+
+
 def test_prompt_submit_expands_context_refs(monkeypatch):
     captured = {}
 

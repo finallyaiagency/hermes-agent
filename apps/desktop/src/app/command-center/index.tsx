@@ -28,6 +28,7 @@ const SECTIONS = ['sessions', 'system', 'usage'] as const satisfies readonly Com
 
 const USAGE_PERIODS = [7, 30, 90] as const
 type UsagePeriod = (typeof USAGE_PERIODS)[number]
+const NETWORK_INSIGHT_RE = /\b(cellular|wifi|wi-fi|wireless|tower|towers)\b/i
 
 interface CommandCenterViewProps {
   initialSection?: CommandCenterSection
@@ -485,6 +486,10 @@ function formatInteger(value: null | number | undefined): string {
   return Number(value ?? 0).toLocaleString()
 }
 
+function isNetworkRelatedInsight(value: string): boolean {
+  return NETWORK_INSIGHT_RE.test(value)
+}
+
 interface UsagePanelProps {
   error: string
   loading: boolean
@@ -496,8 +501,14 @@ interface UsagePanelProps {
 function UsagePanel({ error, loading, onRefresh, period, usage }: UsagePanelProps) {
   const daily = useMemo(() => usage?.daily ?? [], [usage])
   const totals = usage?.totals
-  const byModel = usage?.by_model ?? []
-  const topSkills = usage?.skills?.top_skills ?? []
+  const byModel = useMemo(
+    () => (usage?.by_model ?? []).filter(entry => !isNetworkRelatedInsight(entry.model)),
+    [usage?.by_model]
+  )
+  const topSkills = useMemo(
+    () => (usage?.skills?.top_skills ?? []).filter(entry => !isNetworkRelatedInsight(entry.skill)),
+    [usage?.skills?.top_skills]
+  )
 
   const maxTokens = useMemo(() => {
     if (!daily.length) {

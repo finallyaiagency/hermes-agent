@@ -109,7 +109,6 @@ const SETTINGS_OWNED_COMMANDS = new Set(['/skills'])
 const ADVANCED_COMMANDS = new Set([
   '/curator',
   '/fast',
-  '/insights',
   '/kanban',
   '/personality',
   '/reasoning',

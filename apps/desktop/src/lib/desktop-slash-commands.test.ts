@@ -34,6 +34,7 @@ describe('desktop slash command curation', () => {
     expect(isDesktopSlashSuggestion('/skills')).toBe(false)
     expect(isDesktopSlashSuggestion('/voice')).toBe(false)
     expect(isDesktopSlashSuggestion('/curator')).toBe(false)
+    expect(isDesktopSlashSuggestion('/insights')).toBe(false)
   })
 
   it('allows aliases to execute without cluttering the popover', () => {
