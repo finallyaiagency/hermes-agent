@@ -6242,6 +6242,17 @@ class MemoryReset(BaseModel):
     target: str = "all"
 
 
+class MemoryFileUpdate(BaseModel):
+    content: str
+
+
+class ProfileVoiceConfig(BaseModel):
+    provider: str = ""
+    edge_voice: str = ""
+    openai_voice: str = ""
+    elevenlabs_voice_id: str = ""
+
+
 @app.get("/api/memory")
 async def get_memory_status():
     from plugins.memory import discover_memory_providers
@@ -6275,6 +6286,79 @@ async def get_memory_status():
         "providers": providers,
         "builtin_files": files,
     }
+
+
+@app.get("/api/memory/{name}")
+async def get_memory_file(name: str):
+    key = (name or "").strip().lower()
+    if key not in {"memory", "user"}:
+        raise HTTPException(status_code=400, detail="name must be memory or user")
+
+    mem_dir = get_hermes_home() / "memories"
+    path = mem_dir / ("MEMORY.md" if key == "memory" else "USER.md")
+    try:
+        content = path.read_text(encoding="utf-8") if path.exists() else ""
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not read {path.name}: {exc}")
+    return {"name": key, "content": content}
+
+
+@app.put("/api/memory/{name}")
+async def update_memory_file(name: str, body: MemoryFileUpdate):
+    key = (name or "").strip().lower()
+    if key not in {"memory", "user"}:
+        raise HTTPException(status_code=400, detail="name must be memory or user")
+
+    mem_dir = get_hermes_home() / "memories"
+    mem_dir.mkdir(parents=True, exist_ok=True)
+    path = mem_dir / ("MEMORY.md" if key == "memory" else "USER.md")
+    try:
+        path.write_text(body.content or "", encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not write {path.name}: {exc}")
+    return {"ok": True, "name": key}
+
+
+@app.get("/api/profiles/{name}/voice")
+async def get_profile_voice(name: str):
+    profile_dir = _resolve_profile_dir(name)
+    config_path = profile_dir / "config.yaml"
+    cfg = {}
+    if config_path.exists():
+        try:
+            cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Could not read config.yaml: {exc}")
+    tts = cfg.get("tts") if isinstance(cfg.get("tts"), dict) else {}
+    return {
+        "provider": str(tts.get("provider") or ""),
+        "edge_voice": str((tts.get("edge") or {}).get("voice") or ""),
+        "openai_voice": str((tts.get("openai") or {}).get("voice") or ""),
+        "elevenlabs_voice_id": str((tts.get("elevenlabs") or {}).get("voice_id") or ""),
+    }
+
+
+@app.put("/api/profiles/{name}/voice")
+async def update_profile_voice(name: str, body: ProfileVoiceConfig):
+    profile_dir = _resolve_profile_dir(name)
+    config_path = profile_dir / "config.yaml"
+    try:
+        cfg = {}
+        if config_path.exists():
+            cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        if not isinstance(cfg.get("tts"), dict):
+            cfg["tts"] = {}
+        cfg["tts"]["provider"] = body.provider.strip()
+        cfg["tts"].setdefault("edge", {})
+        cfg["tts"].setdefault("openai", {})
+        cfg["tts"].setdefault("elevenlabs", {})
+        cfg["tts"]["edge"]["voice"] = body.edge_voice.strip()
+        cfg["tts"]["openai"]["voice"] = body.openai_voice.strip()
+        cfg["tts"]["elevenlabs"]["voice_id"] = body.elevenlabs_voice_id.strip()
+        config_path.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=False), encoding="utf-8")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not update voice config: {exc}")
+    return {"ok": True}
 
 
 @app.put("/api/memory/provider")

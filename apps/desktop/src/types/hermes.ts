@@ -471,6 +471,18 @@ export interface ProfileSoul {
   exists: boolean
 }
 
+export interface MemoryFileContent {
+  content: string
+  name: 'memory' | 'user'
+}
+
+export interface ProfileVoiceConfig {
+  edge_voice: string
+  elevenlabs_voice_id: string
+  openai_voice: string
+  provider: string
+}
+
 export interface ProfilesResponse {
   profiles: ProfileInfo[]
 }

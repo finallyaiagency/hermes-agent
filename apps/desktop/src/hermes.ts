@@ -29,7 +29,9 @@ import type {
   OAuthSubmitResponse,
   PaginatedSessions,
   ProfileCreatePayload,
+  MemoryFileContent,
   ProfileSoul,
+  ProfileVoiceConfig,
   ProfilesResponse,
   SessionMessagesResponse,
   SessionSearchResponse,
@@ -80,7 +82,9 @@ export type {
   PaginatedSessions,
   ProfileCreatePayload,
   ProfileInfo,
+  MemoryFileContent,
   ProfileSoul,
+  ProfileVoiceConfig,
   ProfilesResponse,
   RpcEvent,
   SessionCreateResponse,
@@ -551,6 +555,37 @@ export function updateProfileSoul(name: string, content: string): Promise<{ ok: 
     path: `/api/profiles/${encodeURIComponent(name)}/soul`,
     method: 'PUT',
     body: { content }
+  })
+}
+
+export function getMemoryFile(name: 'memory' | 'user'): Promise<MemoryFileContent> {
+  return window.hermesDesktop.api<MemoryFileContent>({
+    path: `/api/memory/${encodeURIComponent(name)}`
+  })
+}
+
+export function updateMemoryFile(name: 'memory' | 'user', content: string): Promise<{ ok: boolean }> {
+  return window.hermesDesktop.api<{ ok: boolean }>({
+    path: `/api/memory/${encodeURIComponent(name)}`,
+    method: 'PUT',
+    body: { content }
+  })
+}
+
+export function getProfileVoice(name: string): Promise<ProfileVoiceConfig> {
+  return window.hermesDesktop.api<ProfileVoiceConfig>({
+    path: `/api/profiles/${encodeURIComponent(name)}/voice`
+  })
+}
+
+export function updateProfileVoice(
+  name: string,
+  body: ProfileVoiceConfig
+): Promise<{ ok: boolean }> {
+  return window.hermesDesktop.api<{ ok: boolean }>({
+    path: `/api/profiles/${encodeURIComponent(name)}/voice`,
+    method: 'PUT',
+    body
   })
 }
 

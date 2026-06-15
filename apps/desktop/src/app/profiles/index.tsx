@@ -15,7 +15,19 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Textarea } from '@/components/ui/textarea'
 import { Tip } from '@/components/ui/tooltip'
-import { createProfile, getProfiles, getProfileSoul, type ProfileInfo, updateProfileSoul } from '@/hermes'
+import {
+  createProfile,
+  getMemoryFile,
+  getProfiles,
+  getProfileSoul,
+  getProfileVoice,
+  type MemoryFileContent,
+  type ProfileInfo,
+  type ProfileVoiceConfig,
+  updateMemoryFile,
+  updateProfileSoul,
+  updateProfileVoice
+} from '@/hermes'
 import { AlertTriangle, Save, Users } from '@/lib/icons'
 import { profileColor } from '@/lib/profile-color'
 import { cn } from '@/lib/utils'
@@ -63,6 +75,7 @@ export function ProfilesView({ onClose }: ProfilesViewProps) {
   const [pendingRename, setPendingRename] = useState<null | ProfileInfo>(null)
   const [pendingDelete, setPendingDelete] = useState<null | ProfileInfo>(null)
   const [loadError, setLoadError] = useState<null | string>(null)
+  const memoryRef = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -133,15 +146,26 @@ export function ProfilesView({ onClose }: ProfilesViewProps) {
               <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-(--ui-text-tertiary)">
                 Profiles
               </span>
-              <Button
-                aria-label="New profile"
-                className="text-(--ui-text-tertiary) hover:bg-(--ui-control-hover-background) hover:text-foreground"
-                onClick={() => setCreateOpen(true)}
-                size="icon-xs"
-                variant="ghost"
-              >
-                <Codicon name="add" size="0.875rem" />
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button
+                  aria-label="Jump to memory"
+                  className="text-(--ui-text-tertiary) hover:bg-(--ui-control-hover-background) hover:text-foreground"
+                  onClick={() => memoryRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                  size="icon-xs"
+                  variant="ghost"
+                >
+                  <Codicon name="library" size="0.875rem" />
+                </Button>
+                <Button
+                  aria-label="New profile"
+                  className="text-(--ui-text-tertiary) hover:bg-(--ui-control-hover-background) hover:text-foreground"
+                  onClick={() => setCreateOpen(true)}
+                  size="icon-xs"
+                  variant="ghost"
+                >
+                  <Codicon name="add" size="0.875rem" />
+                </Button>
+              </div>
             </div>
             {loadError && (
               <div className="mb-1 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-[0.66rem] text-destructive">
@@ -166,7 +190,7 @@ export function ProfilesView({ onClose }: ProfilesViewProps) {
 
           <OverlayMain className="px-0">
             {selected ? (
-              <ProfileDetail key={selected.name} profile={selected} />
+              <ProfileDetail key={selected.name} memoryRef={memoryRef} profile={selected} />
             ) : (
               <div className="grid h-full place-items-center px-6 py-12 text-center text-sm text-muted-foreground">
                 <div>
@@ -342,7 +366,8 @@ function ProfileActionsMenu({
   )
 }
 
-function ProfileDetail({ profile }: { profile: ProfileInfo }) {
+function ProfileDetail({ profile, memoryRef }: { memoryRef: React.RefObject<HTMLDivElement | null>; profile: ProfileInfo }) {
+  const [section, setSection] = useState<'memory' | 'soul' | 'user' | 'voice'>('soul')
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -373,7 +398,33 @@ function ProfileDetail({ profile }: { profile: ProfileInfo }) {
             </dl>
           </header>
 
-          <SoulEditor profileName={profile.name} />
+          <div className="flex flex-wrap gap-2 rounded-lg bg-muted p-1">
+            <Button size="sm" onClick={() => setSection('soul')} variant={section === 'soul' ? 'default' : 'ghost'}>
+              SOUL.md
+            </Button>
+            <Button size="sm" onClick={() => setSection('memory')} variant={section === 'memory' ? 'default' : 'ghost'}>
+              MEMORY.md
+            </Button>
+            <Button size="sm" onClick={() => setSection('user')} variant={section === 'user' ? 'default' : 'ghost'}>
+              USER.md
+            </Button>
+            <Button size="sm" onClick={() => setSection('voice')} variant={section === 'voice' ? 'default' : 'ghost'}>
+              Voice
+            </Button>
+          </div>
+
+          {section === 'soul' && <SoulEditor profileName={profile.name} />}
+          {section === 'memory' && (
+            <div ref={memoryRef}>
+              <MemoryEditor activeTab="memory" />
+            </div>
+          )}
+          {section === 'user' && (
+            <div ref={memoryRef}>
+              <MemoryEditor activeTab="user" />
+            </div>
+          )}
+          {section === 'voice' && <VoiceEditor profileName={profile.name} />}
         </div>
       </div>
     </div>
@@ -501,6 +552,194 @@ function SoulEditor({ profileName }: { profileName: string }) {
           />
         </Button>
       </div>
+    </section>
+  )
+}
+
+function MemoryEditor({ activeTab }: { activeTab: 'memory' | 'user' }) {
+  const [memory, setMemory] = useState<null | MemoryFileContent>(null)
+  const [user, setUser] = useState<null | MemoryFileContent>(null)
+  const [loading, setLoading] = useState(true)
+  const [status, setStatus] = useState<'idle' | 'saved' | 'saving'>('idle')
+  const [error, setError] = useState<null | string>(null)
+  const savedTimerRef = useRef<null | number>(null)
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    setStatus('idle')
+
+    void Promise.all([getMemoryFile('memory'), getMemoryFile('user')])
+      .then(([memoryFile, userFile]) => {
+        if (cancelled) return
+        setMemory(memoryFile)
+        setUser(userFile)
+      })
+      .catch(err => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to load memory files')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (savedTimerRef.current !== null) window.clearTimeout(savedTimerRef.current)
+    },
+    []
+  )
+
+  const current = activeTab === 'memory' ? memory : user
+
+  async function handleSave() {
+    const selected = activeTab === 'memory' ? memory : user
+    if (!selected) return
+
+    setStatus('saving')
+    setError(null)
+    if (savedTimerRef.current !== null) window.clearTimeout(savedTimerRef.current)
+
+    try {
+      await updateMemoryFile(activeTab, selected.content)
+      setStatus('saved')
+      savedTimerRef.current = window.setTimeout(() => {
+        setStatus(current => (current === 'saved' ? 'idle' : current))
+      }, 2200)
+    } catch (err) {
+      setStatus('idle')
+      setError(err instanceof Error ? err.message : 'Failed to save memory file')
+    }
+  }
+
+  return (
+    <section className="space-y-2 border-t border-border/60 pt-6">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div>
+          <h4 className="text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            {activeTab === 'memory' ? 'MEMORY.md' : 'USER.md'}
+          </h4>
+          <p className="text-xs text-muted-foreground">
+            {activeTab === 'memory'
+              ? 'Shared memory for the runtime profile.'
+              : 'User memory for the runtime profile.'}
+          </p>
+        </div>
+      </div>
+
+      {loading ? (
+        <PageLoader className="min-h-44" label="Loading memory files" />
+      ) : (
+        <Textarea
+          className="min-h-72 font-mono text-xs leading-5"
+          onChange={event =>
+            activeTab === 'memory'
+              ? setMemory({ name: 'memory', content: event.target.value })
+              : setUser({ name: 'user', content: event.target.value })
+          }
+          value={current?.content ?? ''}
+        />
+      )}
+
+      {error && (
+        <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <div className="flex justify-end">
+        <Button disabled={loading || status === 'saving'} onClick={() => void handleSave()} size="sm">
+          <ActionStatus busy="Saving…" done="Saved" idle="Save memory" idleIcon={<Save />} state={status === 'saved' ? 'done' : status} />
+        </Button>
+      </div>
+    </section>
+  )
+}
+
+function VoiceEditor({ profileName }: { profileName: string }) {
+  const [voice, setVoice] = useState<null | ProfileVoiceConfig>(null)
+  const [loading, setLoading] = useState(true)
+  const [status, setStatus] = useState<'idle' | 'saved' | 'saving'>('idle')
+  const [error, setError] = useState<null | string>(null)
+  const savedTimerRef = useRef<null | number>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    setStatus('idle')
+    void getProfileVoice(profileName)
+      .then(data => {
+        if (!cancelled) setVoice(data)
+      })
+      .catch(err => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load voice config')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [profileName])
+
+  useEffect(() => () => { if (savedTimerRef.current !== null) window.clearTimeout(savedTimerRef.current) }, [])
+
+  async function handleSave() {
+    if (!voice) return
+    setStatus('saving')
+    setError(null)
+    try {
+      await updateProfileVoice(profileName, voice)
+      setStatus('saved')
+      savedTimerRef.current = window.setTimeout(() => setStatus(current => (current === 'saved' ? 'idle' : current)), 2200)
+    } catch (err) {
+      setStatus('idle')
+      setError(err instanceof Error ? err.message : 'Failed to save voice config')
+    }
+  }
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <h4 className="text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Voice</h4>
+        <p className="text-xs text-muted-foreground">Per-profile TTS settings.</p>
+      </div>
+      {loading ? (
+        <PageLoader className="min-h-44" label="Loading voice settings" />
+      ) : voice ? (
+        <div className="grid gap-3">
+          <label className="grid gap-1 text-xs">
+            Provider
+            <input className="rounded border border-border bg-background px-3 py-2" value={voice.provider} onChange={e => setVoice({ ...voice, provider: e.target.value })} />
+          </label>
+          <label className="grid gap-1 text-xs">
+            Edge voice
+            <input className="rounded border border-border bg-background px-3 py-2" value={voice.edge_voice} onChange={e => setVoice({ ...voice, edge_voice: e.target.value })} />
+          </label>
+          <label className="grid gap-1 text-xs">
+            OpenAI voice
+            <input className="rounded border border-border bg-background px-3 py-2" value={voice.openai_voice} onChange={e => setVoice({ ...voice, openai_voice: e.target.value })} />
+          </label>
+          <label className="grid gap-1 text-xs">
+            ElevenLabs voice id
+            <input className="rounded border border-border bg-background px-3 py-2" value={voice.elevenlabs_voice_id} onChange={e => setVoice({ ...voice, elevenlabs_voice_id: e.target.value })} />
+          </label>
+          {error && <div className="rounded border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>}
+          <div className="flex justify-end">
+            <Button disabled={status === 'saving'} onClick={() => void handleSave()} size="sm">
+              <ActionStatus busy="Saving…" done="Saved" idle="Save voice" idleIcon={<Save />} state={status === 'saved' ? 'done' : status} />
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }

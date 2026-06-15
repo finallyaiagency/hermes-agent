@@ -28,6 +28,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from agent.codex_responses_adapter import _summarize_user_message_for_log
+from agent.account_usage import fetch_account_usage, render_usage_warning_lines
 from agent.display import KawaiiSpinner
 from agent.error_classifier import FailoverReason, classify_api_error
 from agent.iteration_budget import IterationBudget
@@ -62,6 +63,8 @@ from tools.skill_provenance import set_current_write_origin
 from utils import base_url_host_matches, env_var_enabled
 
 logger = logging.getLogger(__name__)
+
+_MAX_CONTINUATION_ATTEMPTS = 5
 
 
 def _ollama_context_limit_error(agent: Any, request_tokens: int) -> Optional[str]:
@@ -337,14 +340,17 @@ def _get_continuation_prompt(is_partial_stub: bool, dropped_tools: Optional[List
         return (
             "[System: The previous response was cut off by a "
             "network error mid-stream. Continue exactly where "
-            "you left off. Do not restart or repeat prior text. "
-            "Finish the answer directly.]"
+            "you left off. Do not restart, repeat prior text, or "
+            "re-explain the setup. Resume from the last unfinished "
+            "sentence and finish the answer directly.]"
         )
     else:
         return (
             "[System: Your previous response was truncated by the output "
             "length limit. Continue exactly where you left off. Do not "
-            "restart or repeat prior text. Finish the answer directly.]"
+            "restart, repeat prior text, or re-explain the setup. "
+            "Resume from the last unfinished sentence and finish the "
+            "answer directly.]"
         )
 
 
@@ -1161,6 +1167,22 @@ def run_conversation(
         api_request_id = f"{turn_id}:api:{api_call_count}"
         agent._current_api_request_id = api_request_id
 
+        if (
+            getattr(agent, "provider", "") == "openai-codex"
+            and not getattr(agent, "_codex_usage_warning_checked", False)
+        ):
+            agent._codex_usage_warning_checked = True
+            try:
+                snapshot = fetch_account_usage(
+                    "openai-codex",
+                    base_url=getattr(agent, "base_url", None),
+                    api_key=getattr(agent, "api_key", None),
+                )
+                for line in render_usage_warning_lines(snapshot):
+                    agent._buffer_status(f"⚠️  {line}")
+            except Exception:
+                pass
+
         while retry_count < max_retries:
             # ── Nous Portal rate limit guard ──────────────────────
             # If another session already recorded that Nous is rate-
@@ -1729,7 +1751,7 @@ def run_conversation(
                             if assistant_message.content:
                                 truncated_response_parts.append(assistant_message.content)
 
-                            if length_continue_retries < 3:
+                            if length_continue_retries < _MAX_CONTINUATION_ATTEMPTS:
                                 _is_partial_stream_stub = (
                                     getattr(response, "id", "") == PARTIAL_STREAM_STUB_ID
                                 )
@@ -1743,18 +1765,18 @@ def run_conversation(
                                         f"{agent.log_prefix}↻ Stream interrupted mid "
                                         f"tool-call ({_tool_list}) — requesting "
                                         f"chunked retry "
-                                        f"({length_continue_retries}/3)..."
+                                        f"({length_continue_retries}/{_MAX_CONTINUATION_ATTEMPTS})..."
                                     )
                                 elif _is_partial_stream_stub:
                                     agent._vprint(
                                         f"{agent.log_prefix}↻ Stream interrupted — "
                                         f"requesting continuation "
-                                        f"({length_continue_retries}/3)..."
+                                        f"({length_continue_retries}/{_MAX_CONTINUATION_ATTEMPTS})..."
                                     )
                                 else:
                                     agent._vprint(
                                         f"{agent.log_prefix}↻ Requesting continuation "
-                                        f"({length_continue_retries}/3)..."
+                                        f"({length_continue_retries}/{_MAX_CONTINUATION_ATTEMPTS})..."
                                     )
 
                                 _continue_content = _get_continuation_prompt(
@@ -1778,7 +1800,10 @@ def run_conversation(
                                 "api_calls": api_call_count,
                                 "completed": False,
                                 "partial": True,
-                                "error": "Response remained truncated after 3 continuation attempts",
+                                "error": (
+                                    "Response remained truncated after "
+                                    f"{_MAX_CONTINUATION_ATTEMPTS} continuation attempts"
+                                ),
                             }
 
                     if agent.api_mode in {"chat_completions", "bedrock_converse", "anthropic_messages"}:
@@ -3710,9 +3735,12 @@ def run_conversation(
                         messages.append(interim_msg)
                         agent._emit_interim_assistant_message(interim_msg)
 
-                if agent._codex_incomplete_retries < 3:
+                if agent._codex_incomplete_retries < _MAX_CONTINUATION_ATTEMPTS:
                     if not agent.quiet_mode:
-                        agent._vprint(f"{agent.log_prefix}↻ Codex response incomplete; continuing turn ({agent._codex_incomplete_retries}/3)")
+                        agent._vprint(
+                            f"{agent.log_prefix}↻ Codex response incomplete; continuing turn "
+                            f"({agent._codex_incomplete_retries}/{_MAX_CONTINUATION_ATTEMPTS})"
+                        )
                     agent._session_messages = messages
                     continue
 
@@ -3724,7 +3752,10 @@ def run_conversation(
                     "api_calls": api_call_count,
                     "completed": False,
                     "partial": True,
-                    "error": "Codex response remained incomplete after 3 continuation attempts",
+                    "error": (
+                        "Codex response remained incomplete after "
+                        f"{_MAX_CONTINUATION_ATTEMPTS} continuation attempts"
+                    ),
                 }
             elif hasattr(agent, "_codex_incomplete_retries"):
                 agent._codex_incomplete_retries = 0

@@ -113,6 +113,31 @@ def render_account_usage_lines(snapshot: Optional[AccountUsageSnapshot], *, mark
     return lines
 
 
+def render_usage_warning_lines(
+    snapshot: Optional[AccountUsageSnapshot],
+    *,
+    advisory_threshold: float = 80.0,
+) -> list[str]:
+    """Return a short advisory warning when usage is trending high.
+
+    This is intentionally best-effort and non-blocking. It is meant to warn
+    before hard exhaustion, not to guarantee a switch.
+    """
+    if not snapshot or not snapshot.windows:
+        return []
+    warnings: list[str] = []
+    for window in snapshot.windows:
+        if window.used_percent is None:
+            continue
+        if float(window.used_percent) < advisory_threshold:
+            continue
+        reset = f", resets {window.reset_at.astimezone().strftime('%Y-%m-%d %H:%M %Z')}" if window.reset_at else ""
+        warnings.append(
+            f"{snapshot.provider} usage is trending high ({window.label}: {float(window.used_percent):.0f}% used{reset})."
+        )
+    return warnings
+
+
 def _resolve_codex_usage_url(base_url: str) -> str:
     normalized = (base_url or "").strip().rstrip("/")
     if not normalized:
